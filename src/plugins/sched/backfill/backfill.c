@@ -1147,6 +1147,17 @@ static int _attempt_backfill(void)
 
 	job_queue = build_job_queue(true, true);
 	job_test_count = list_count(job_queue);
+
+	//TESTE
+	struct job_record *job_ptr2 = NULL;
+	ListIterator job_iterator;
+	job_iterator = list_iterator_create(job_list);
+	while ((job_ptr2 = (struct job_record *) list_next(job_iterator))) {
+		debug("backfill: On queue JOBID=%u",job_ptr2->job_id);
+	}
+	list_iterator_destroy(job_iterator);
+
+
 	if (job_test_count == 0) {
 		if (debug_flags & DEBUG_FLAG_BACKFILL)
 			info("backfill: no jobs to backfill");
