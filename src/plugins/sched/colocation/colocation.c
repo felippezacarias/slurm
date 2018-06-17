@@ -141,6 +141,9 @@ static void _compute_start_times(void)
 		job_ptr  = job_queue_rec->job_ptr;
 		part_ptr = job_queue_rec->part_ptr;
 		xfree(job_queue_rec);
+
+		debug5("COLOCATION: function %s jobid %d hardware profile %s.",__func__,job_ptr->job_id,job_ptr->hwprofile);
+
 		if (part_ptr != job_ptr->part_ptr)
 			continue;	/* Only test one partition */
 

@@ -7901,6 +7901,8 @@ _copy_job_desc_to_job_record(job_desc_msg_t * job_desc,
 	job_ptr->cr_enabled = 0;
 	job_ptr->derived_ec = 0;
 
+	job_ptr->hwprofile  = xstrdup(job_desc->hwprofile);
+
 	job_ptr->licenses  = xstrdup(job_desc->licenses);
 	job_ptr->mail_type = job_desc->mail_type;
 	job_ptr->mail_user = xstrdup(job_desc->mail_user);
@@ -9278,6 +9280,9 @@ static void _list_delete_job(void *job_entry)
 	xfree(job_ptr->gres_req);
 	xfree(job_ptr->gres_used);
 	FREE_NULL_LIST(job_ptr->gres_list);
+
+	xfree(job_ptr->hwprofile);
+
 	xfree(job_ptr->licenses);
 	FREE_NULL_LIST(job_ptr->license_list);
 	xfree(job_ptr->limit_set.tres);

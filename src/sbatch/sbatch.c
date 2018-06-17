@@ -558,6 +558,8 @@ static int _fill_job_desc_from_opts(job_desc_msg_t *desc)
 	desc->profile = opt.profile;
 	if (opt.licenses)
 		desc->licenses = xstrdup(opt.licenses);
+	if (opt.hwprofile)
+		desc->hwprofile = xstrdup(opt.hwprofile);
 	if (opt.nodes_set) {
 		desc->min_nodes = opt.min_nodes;
 		if (opt.max_nodes)

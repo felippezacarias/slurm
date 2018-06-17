@@ -243,6 +243,7 @@ typedef struct slurm_options {
 	uint16_t warn_time;		/* --signal=flags:<int>@<time>	*/
 
 	bool hold;			/* --hold			*/
+	char *hwprofile;			/* --hwprofile			*/
 	bool no_kill;			/* --no-kill			*/
 	char *acctg_freq;		/* --acctg-freq=<type1>=<freq1>,... */
 	bool overcommit;		/* --overcommit			*/

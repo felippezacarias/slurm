@@ -204,6 +204,7 @@ enum wrappers {
 #define LONG_OPT_GPUS_PER_SOCKET 0x177
 #define LONG_OPT_GPUS_PER_TASK   0x178
 #define LONG_OPT_MEM_PER_GPU     0x179
+#define LONG_OPT_APPLICATION_HARDWARE_PROFILE 0x180
 
 /*---- global variables, defined in opt.h ----*/
 slurm_opt_t opt;
@@ -819,6 +820,7 @@ static struct option long_options[] = {
 	{"gpus",          required_argument, 0, 'G'},
 	{"help",          no_argument,       0, 'h'},
 	{"hold",          no_argument,       0, 'H'},
+	{"hwprofile",     required_argument, 0, LONG_OPT_APPLICATION_HARDWARE_PROFILE},
 	{"input",         required_argument, 0, 'i'},
 	{"immediate",     no_argument,       0, 'I'},
 	{"job-name",      required_argument, 0, 'J'},
@@ -1067,6 +1069,8 @@ extern void process_options_second_pass(int argc, char **argv, int *argc_off,
 	static bool first_pass = true;
 	int i;
 
+	debug5("function %s",__func__);
+
 	/* initialize option defaults */
 	_opt_default(first_pass);
 	first_pass = false;
@@ -1238,6 +1242,9 @@ static bool _opt_batch_script(const char * file, const void *body, int size,
 	int skipped = 0, warned = 0, lineno = 0;
 	int i, pack_scan_inx = 0;
 	bool more_packs = false;
+
+	debug5("function %s",__func__);
+
 
 	magic_word_len1 = strlen(magic_word1);
 	magic_word_len2 = strlen(magic_word2);
@@ -1425,6 +1432,8 @@ static void _set_options(int argc, char **argv)
 		error("Unable to create options table");
 		exit(error_exit);
 	}
+
+	debug5("function %s",__func__);
 
 	optind = 0;
 	while ((opt_char = getopt_long(argc, argv, opt_string,
@@ -2221,6 +2230,13 @@ static void _set_options(int argc, char **argv)
 				opt.x11 = x11_str2flags(optarg);
 			else
 				opt.x11 = X11_FORWARD_BATCH;
+			break;
+		case LONG_OPT_APPLICATION_HARDWARE_PROFILE:
+			if (!optarg)
+				break;	/* Fix for Coverity false positive */
+			xfree(opt.hwprofile);
+			opt.hwprofile = xstrdup(optarg);
+			debug5("function %s hwprofile %s optarg %s.",__func__,opt.hwprofile,optarg);
 			break;
 		default:
 			if (spank_process_option (opt_char, optarg) < 0)
@@ -3572,7 +3588,7 @@ static void _usage(void)
 	printf(
 "Usage: sbatch [-N nnodes] [-n ntasks]\n"
 "              [-c ncpus] [-r n] [-p partition] [--hold] [--parsable] [-t minutes]\n"
-"              [-D path] [--no-kill] [--overcommit]\n"
+"              [-D path] [--no-kill] [--overcommit] [--hwprofile=file]\n"
 "              [--input file] [--output file] [--error file]\n"
 "              [--time-min=minutes] [--licenses=names] [--clusters=cluster_names]\n"
 "              [--chdir=directory] [--oversubscibe] [-m dist] [-J jobname]\n"
@@ -3635,6 +3651,7 @@ static void _help(void)
 "      --gres=list             required generic resources\n"
 "      --gres-flags=opts       flags related to GRES management\n"
 "  -H, --hold                  submit job in held state\n"
+"      --hwprofile=file        set file path for application hardware counters\n"
 "      --ignore-pbs            Ignore #PBS options in the batch script\n"
 "  -i, --input=in              file for batch script's standard input\n"
 "      --jobid=id              run under already allocated job\n"
