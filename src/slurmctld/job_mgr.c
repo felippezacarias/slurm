@@ -4067,6 +4067,7 @@ void dump_job_desc(job_desc_msg_t * job_specs)
 	       job_specs->min_nodes, job_specs->max_nodes,
 	       job_specs->sockets_per_node, job_specs->cores_per_socket,
 	       job_specs->threads_per_core);
+	debug3("   hwprofile=%s",job_specs->hwprofile);
 
 	if (job_specs->pn_min_memory == NO_VAL64) {
 		pn_min_memory = -1L;

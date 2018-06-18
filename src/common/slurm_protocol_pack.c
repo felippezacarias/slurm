@@ -8842,6 +8842,7 @@ _pack_job_desc_msg(job_desc_msg_t * job_desc_ptr, Buf buffer,
 		pack_time(job_desc_ptr->deadline, buffer);
 
 		packstr(job_desc_ptr->licenses, buffer);
+		packstr(job_desc_ptr->hwprofile, buffer);
 		pack16(job_desc_ptr->mail_type, buffer);
 		packstr(job_desc_ptr->mail_user, buffer);
 		packstr(job_desc_ptr->reservation, buffer);
@@ -9023,6 +9024,7 @@ _pack_job_desc_msg(job_desc_msg_t * job_desc_ptr, Buf buffer,
 		pack_time(job_desc_ptr->deadline, buffer);
 
 		packstr(job_desc_ptr->licenses, buffer);
+		packstr(job_desc_ptr->hwprofile, buffer);
 		pack16(job_desc_ptr->mail_type, buffer);
 		packstr(job_desc_ptr->mail_user, buffer);
 		packstr(job_desc_ptr->reservation, buffer);
@@ -9192,6 +9194,7 @@ _pack_job_desc_msg(job_desc_msg_t * job_desc_ptr, Buf buffer,
 		pack_time(job_desc_ptr->deadline, buffer);
 
 		packstr(job_desc_ptr->licenses, buffer);
+		packstr(job_desc_ptr->hwprofile, buffer);
 		pack16(job_desc_ptr->mail_type, buffer);
 		packstr(job_desc_ptr->mail_user, buffer);
 		packstr(job_desc_ptr->reservation, buffer);
@@ -9422,6 +9425,8 @@ _unpack_job_desc_msg(job_desc_msg_t ** job_desc_buffer_ptr, Buf buffer,
 
 		safe_unpackstr_xmalloc(&job_desc_ptr->licenses,
 				       &uint32_tmp, buffer);
+		safe_unpackstr_xmalloc(&job_desc_ptr->hwprofile,
+				       &uint32_tmp, buffer);
 		safe_unpack16(&job_desc_ptr->mail_type, buffer);
 		safe_unpackstr_xmalloc(&job_desc_ptr->mail_user,
 				       &uint32_tmp, buffer);
@@ -9616,6 +9621,8 @@ _unpack_job_desc_msg(job_desc_msg_t ** job_desc_buffer_ptr, Buf buffer,
 
 		safe_unpackstr_xmalloc(&job_desc_ptr->licenses,
 				       &uint32_tmp, buffer);
+		safe_unpackstr_xmalloc(&job_desc_ptr->hwprofile,
+				       &uint32_tmp, buffer);
 		safe_unpack16(&job_desc_ptr->mail_type, buffer);
 		safe_unpackstr_xmalloc(&job_desc_ptr->mail_user,
 				       &uint32_tmp, buffer);
@@ -9788,6 +9795,8 @@ _unpack_job_desc_msg(job_desc_msg_t ** job_desc_buffer_ptr, Buf buffer,
 		safe_unpack_time(&job_desc_ptr->deadline, buffer);
 
 		safe_unpackstr_xmalloc(&job_desc_ptr->licenses,
+				       &uint32_tmp, buffer);
+		safe_unpackstr_xmalloc(&job_desc_ptr->hwprofile,
 				       &uint32_tmp, buffer);
 		safe_unpack16(&job_desc_ptr->mail_type, buffer);
 		safe_unpackstr_xmalloc(&job_desc_ptr->mail_user,

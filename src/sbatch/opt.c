@@ -1069,8 +1069,6 @@ extern void process_options_second_pass(int argc, char **argv, int *argc_off,
 	static bool first_pass = true;
 	int i;
 
-	debug5("function %s",__func__);
-
 	/* initialize option defaults */
 	_opt_default(first_pass);
 	first_pass = false;
@@ -1242,9 +1240,6 @@ static bool _opt_batch_script(const char * file, const void *body, int size,
 	int skipped = 0, warned = 0, lineno = 0;
 	int i, pack_scan_inx = 0;
 	bool more_packs = false;
-
-	debug5("function %s",__func__);
-
 
 	magic_word_len1 = strlen(magic_word1);
 	magic_word_len2 = strlen(magic_word2);
@@ -1432,8 +1427,6 @@ static void _set_options(int argc, char **argv)
 		error("Unable to create options table");
 		exit(error_exit);
 	}
-
-	debug5("function %s",__func__);
 
 	optind = 0;
 	while ((opt_char = getopt_long(argc, argv, opt_string,
@@ -2236,7 +2229,6 @@ static void _set_options(int argc, char **argv)
 				break;	/* Fix for Coverity false positive */
 			xfree(opt.hwprofile);
 			opt.hwprofile = xstrdup(optarg);
-			debug5("function %s hwprofile %s optarg %s.",__func__,opt.hwprofile,optarg);
 			break;
 		default:
 			if (spank_process_option (opt_char, optarg) < 0)
