@@ -1251,6 +1251,8 @@ static int _schedule(uint32_t job_limit)
 			fifo_sched = true;
 		else
 			fifo_sched = false;
+
+		debug5("COLOCATION %s sched_type = %s prio_type = %s",__func__,sched_type,prio_type);
 		xfree(sched_type);
 		xfree(prio_type);
 
@@ -1556,6 +1558,7 @@ static int _schedule(uint32_t job_limit)
 	}
 	while (1) {
 		if (fifo_sched) {
+			debug5("COLOCATION %s while if",__func__);
 			if (job_ptr && part_iterator &&
 			    IS_JOB_PENDING(job_ptr)) /* test job in next part */
 				goto next_part;
@@ -1590,6 +1593,7 @@ next_part:			part_ptr = (struct part_record *)
 					continue;
 			}
 		} else {
+			debug5("COLOCATION %s while else",__func__);
 			job_queue_rec = list_pop(job_queue);
 			if (!job_queue_rec)
 				break;
@@ -1610,6 +1614,7 @@ next_part:			part_ptr = (struct part_record *)
 				 * reset pointer to "master" job array record */
 				job_ptr = find_job_record(job_ptr->array_job_id);
 			}
+			debug5("COLOCATION %s while else job_ptr->job_state %d",__func__,job_ptr->job_state);
 			if (!job_ptr || !IS_JOB_PENDING(job_ptr))
 				continue;	/* started in other partition */
 			job_ptr->part_ptr = part_ptr;
@@ -2678,6 +2683,8 @@ extern void launch_job(struct job_record *job_ptr)
 #else
 	struct node_record *node_ptr;
 #endif
+
+	debug5("COLOCATION: %s jobid = %d",__func__,job_ptr->job_id);
 
 	if (job_ptr->total_cpus == 0)
 		return;

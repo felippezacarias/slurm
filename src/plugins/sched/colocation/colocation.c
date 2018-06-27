@@ -124,13 +124,21 @@ static void _compute_start_times(void)
 	List job_queue;
 	job_queue_rec_t *job_queue_rec;
 	List preemptee_candidates = NULL;
-	struct job_record *job_ptr;
+	struct job_record *job_ptr = NULL;
 	struct part_record *part_ptr;
 	bitstr_t *alloc_bitmap = NULL, *avail_bitmap = NULL;
 	bitstr_t *exc_core_bitmap = NULL;
 	uint32_t max_nodes, min_nodes, req_nodes, time_limit;
 	time_t now = time(NULL), sched_start, last_job_alloc;
 	bool resv_overlap = false;
+	ListIterator job_iterator;
+
+	//Testing how to get all the jobs, running or not
+	job_iterator = list_iterator_create(job_list);
+	while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
+		debug5("COLOCATION: function %s jobid %d job_status %d.",__func__,job_ptr->job_id,job_ptr->job_state);
+	}
+	list_iterator_destroy(job_iterator);
 
 	sched_start = now;
 	last_job_alloc = now - 1;

@@ -2169,6 +2169,7 @@ static void *_slurmctld_background(void *no_data)
 			slurm_mutex_unlock(&sched_cnt_mutex);
 		}
 		if (job_limit != NO_VAL) {
+			debug5("COLOCATION %s: job_limit = %d",__func__,job_limit);
 			now = time(NULL);
 			last_sched_time = now;
 			lock_slurmctld(job_write_lock2);

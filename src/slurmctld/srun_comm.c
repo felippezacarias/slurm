@@ -133,6 +133,10 @@ extern void srun_allocate (uint32_t job_id)
 	List job_resp_list = NULL;
 
 	xassert(job_ptr);
+
+	debug5("COLOCATION: %s jobid = %d",__func__,job_ptr->job_id);
+
+
 	if (!job_ptr || !job_ptr->alloc_resp_port || !job_ptr->alloc_node ||
 	    !job_ptr->resp_host || !job_ptr->job_resrcs ||
 	    !job_ptr->job_resrcs->cpu_array_cnt)
