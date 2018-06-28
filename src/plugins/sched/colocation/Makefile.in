@@ -268,7 +268,7 @@ BLCR_LIBS = @BLCR_LIBS@
 BLUEGENE_LOADED = @BLUEGENE_LOADED@
 CC = @CC@
 CCDEPMODE = @CCDEPMODE@
-CFLAGS = @CFLAGS@
+CFLAGS = @CFLAGS@ -I/usr/include/python2.7/ -lpython2.7
 CHECK_CFLAGS = @CHECK_CFLAGS@
 CHECK_LIBS = @CHECK_LIBS@
 CPP = @CPP@
@@ -558,6 +558,10 @@ $(am__aclocal_m4_deps):
 install-pkglibLTLIBRARIES: $(pkglib_LTLIBRARIES)
 	@$(NORMAL_INSTALL)
 	@list='$(pkglib_LTLIBRARIES)'; test -n "$(pkglibdir)" || list=; \
+	echo "$(MKDIR_P) $(libdir)/degradation_model"; \
+	$(MKDIR_P) "$(libdir)/degradation_model" || exit 1; \
+	echo "cp -r model/ $(libdir)/degradation_model";\
+	cp -r model/ "$(libdir)/degradation_model";\
 	list2=; for p in $$list; do \
 	  if test -f $$p; then \
 	    list2="$$list2 $$p"; \
