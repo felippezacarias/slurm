@@ -19,6 +19,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <Python.h>
 
 #include "slurm/slurm.h"
 #include "slurm/slurm_errno.h"
@@ -55,6 +56,7 @@ static int sched_timeout = 0;
 static void _compute_start_times(void);
 static void _load_config(void);
 static void _my_sleep(int secs);
+static void _compute_colocation_pairs(void);
 
 /* Terminate colocation_agent */
 extern void stop_colocation_agent(void)
@@ -139,6 +141,9 @@ static void _compute_start_times(void)
 		debug5("COLOCATION: function %s jobid %d job_status %d.",__func__,job_ptr->job_id,job_ptr->job_state);
 	}
 	list_iterator_destroy(job_iterator);
+
+	_compute_colocation_pairs();
+
 
 	sched_start = now;
 	last_job_alloc = now - 1;
@@ -227,6 +232,60 @@ static void _compute_start_times(void)
 	}
 	FREE_NULL_LIST(job_queue);
 	FREE_NULL_BITMAP(alloc_bitmap);
+}
+
+static void _compute_colocation_pairs(void){
+	PyObject *pName, *pModule, *pFunc;
+    PyObject *pArgs, *pValue;
+    int i;
+
+	debug5("Colocation: %s Initiated.",__func__);
+    Py_Initialize();
+    pName = PyString_FromString("degradation_model");
+    /* Error checking of pName left out */
+
+    pModule = PyImport_Import(pName);
+    Py_DECREF(pName);
+
+    if (pModule != NULL) {
+        pFunc = PyObject_GetAttrString(pModule, "colocation_pairs");
+        /* pFunc is a new reference */
+
+        if (pFunc && PyCallable_Check(pFunc)) {
+            pArgs = PyTuple_New(2);
+            pValue = PyInt_FromLong(20);
+            /* pValue reference stolen here: */
+            PyTuple_SetItem(pArgs, 0, pValue);
+			pValue = PyInt_FromLong(40);
+            PyTuple_SetItem(pArgs, 1, pValue);
+
+            
+            pValue = PyObject_CallObject(pFunc, pArgs);
+            Py_DECREF(pArgs);
+            if (pValue != NULL) {
+				debug5("Colocation: %s Result of call: %ld!",__func__,PyInt_AsLong(pValue));
+                Py_DECREF(pValue);
+            }
+            else {
+                Py_DECREF(pFunc);
+                Py_DECREF(pModule);
+                PyErr_Print();
+				debug5("Colocation: %s Call failed!",__func__);
+            }
+        }
+        else {
+            if (PyErr_Occurred())
+                PyErr_Print();
+			debug5("Colocation: %s Cannot find function colocation_pairs!",__func__);            
+        }
+        Py_XDECREF(pFunc);
+        Py_DECREF(pModule);
+    }
+    else {
+        PyErr_Print();
+		debug5("Colocation: %s Failed to load degradation_model!",__func__);
+    }
+    Py_Finalize();
 }
 
 /* Note that slurm.conf has changed */
