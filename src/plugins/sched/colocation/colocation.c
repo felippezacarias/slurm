@@ -19,6 +19,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <errno.h>
 #include <Python.h>
 
 #include "slurm/slurm.h"
@@ -43,6 +44,8 @@
 #  define COLOCATION_INTERVAL	30
 #endif
 
+#define HARDWARE_COUNTER_STRING_SIZE 2056
+
 /*********************** local variables *********************/
 static bool stop_colocation = false;
 static pthread_mutex_t term_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -51,12 +54,27 @@ static bool config_flag = false;
 static int colocation_interval = COLOCATION_INTERVAL;
 static int max_sched_job_cnt = 50;
 static int sched_timeout = 0;
+static List colocation_job_list = (List) NULL;
+
+
+struct colocation_pairs {
+	uint32_t job_id;
+	//Main job
+	struct job_record *job_ptr_p;
+	//Colocated job
+	struct job_record *job_ptr_s;
+};
 
 /*********************** local functions *********************/
-static void _compute_start_times(void);
+static void _colocation_scheduling(void);
 static void _load_config(void);
 static void _my_sleep(int secs);
 static void _compute_colocation_pairs(void);
+static int _suspend_job(uint32_t job_id);
+PyObject* _read_job_profile_file(struct job_record *job_ptr);
+PyObject* _create_model_input(uint32_t jobs_to_colocate);
+
+
 
 /* Terminate colocation_agent */
 extern void stop_colocation_agent(void)
@@ -66,6 +84,12 @@ extern void stop_colocation_agent(void)
 	slurm_cond_signal(&term_cond);
 	slurm_mutex_unlock(&term_lock);
 }
+
+static void _colocation_job_list_del(void *x)
+{
+	xfree(x);
+}
+
 
 static void _my_sleep(int secs)
 {
@@ -120,9 +144,31 @@ static void _load_config(void)
 	xfree(select_type);
 }
 
-static void _compute_start_times(void)
+static int _suspend_job(uint32_t job_id)
 {
-	int j, rc = SLURM_SUCCESS, job_cnt = 0;
+	int rc;
+	suspend_msg_t msg;
+
+	msg.job_id = job_id;
+	msg.job_id_str = NULL;
+	msg.op = SUSPEND_JOB;
+	rc = job_suspend(&msg, 0, -1, false, NO_VAL16);
+	/* job_suspend() returns ESLURM_DISABLED if job is already suspended */
+	if (rc == SLURM_SUCCESS) {
+		if (slurmctld_conf.debug_flags)
+			info("colocation: suspending JobID=%u", job_id);
+		else
+			debug("colocation: suspending JobID=%u", job_id);
+	} else if (rc != ESLURM_DISABLED) {
+		info("colocation: suspending JobID=%u: %s",
+		     job_id, slurm_strerror(rc));
+	}
+	return rc;
+}
+
+static void _colocation_scheduling(void)
+{
+	int j, rc = SLURM_SUCCESS, job_cnt = 0, jobs_to_colocate = 0;
 	List job_queue;
 	job_queue_rec_t *job_queue_rec;
 	List preemptee_candidates = NULL;
@@ -134,16 +180,74 @@ static void _compute_start_times(void)
 	time_t now = time(NULL), sched_start, last_job_alloc;
 	bool resv_overlap = false;
 	ListIterator job_iterator;
+	PyObject *pList;
+
+
+	debug5("COLOCATION: %s colocation_job_list count = %d is empty = %d.",__func__,list_count(colocation_job_list),list_is_empty(colocation_job_list));
+	//First entrance or 
+	//if(list_is_empty(colocation_job_list)){
+	//	job_iterator = list_iterator_create(job_list);		
+	//	while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
+	//		////Counting number of jobs that actualy can be scheduled
+	//		if(job_ptr->job_state == 0 || job_ptr->job_state == 1) jobs_to_colocate++;
+	//		if(job_ptr->job_state == 1){
+	//			debug5("COLOCATION: SUSPENDING job_id %d",job_ptr->job_id);
+	//			_suspend_job(job_ptr->job_id);
+	//		}
+	//	}
+	//	list_iterator_destroy(job_iterator);
+	//}
+
+	//Create degradation graph and compute colocation pairs
+	_compute_colocation_pairs();
+
+
+	debug5("COLOCATION: %s job_list count = %d is empty = %d.",__func__,list_count(job_list),list_is_empty(job_list));
 
 	//Testing how to get all the jobs, running or not
 	job_iterator = list_iterator_create(job_list);
 	while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
-		debug5("COLOCATION: function %s jobid %d job_status %d.",__func__,job_ptr->job_id,job_ptr->job_state);
+		debug5("COLOCATION: function %s jobid %d job_status %d share_res %d priority %d.",__func__,job_ptr->job_id,job_ptr->job_state,job_ptr->details->share_res,job_ptr->priority);
+		//if(job_ptr->job_state == 1) _suspend_job(job_ptr->job_id);
+		
+		if(job_ptr->job_state == 1)	{
+			pList = _read_job_profile_file(job_ptr);
+			debug5("COLOCATION: function %s pList size %d",__func__,PyList_GET_SIZE(pList));
+		}
+		Py_XDECREF(pList);
+
+		if(job_ptr->job_id == 115 || job_ptr->job_id == 116 ){
+			//rc = job_requeue(0, job_ptr->job_id, NULL, true, 0);
+			if(job_ptr->job_state != 1 && job_ptr->priority != 0){
+				suspend_msg_t msg;
+				debug5("COLOCATION: SUSPENDING job_id %d",job_ptr->job_id);
+				msg.job_id = job_ptr->job_id;
+				msg.job_id_str = NULL;
+				msg.op = SUSPEND_JOB;
+				rc = job_suspend(&msg, 0, -1, false, NO_VAL16);
+
+				job_ptr->priority = 0;
+				job_ptr->details->share_res = 1;
+			}
+			else{
+				if(job_ptr->priority == 0){
+					suspend_msg_t msg;
+					debug5("COLOCATION: RESUMING job_id %d",job_ptr->job_id);
+					msg.job_id = job_ptr->job_id;
+					msg.job_id_str = NULL;
+					msg.op = RESUME_JOB;
+					//rc = job_suspend(&msg, 0, -1, false, NO_VAL16);
+					rc = job_requeue(0, job_ptr->job_id, NULL, true, 0);
+
+					job_ptr->priority = 100;
+					job_ptr->details->share_res = 1;
+				}
+
+			}
+		}
+		if(job_ptr->job_state == 2) rc = job_requeue(0, job_ptr->job_id, NULL, true, 0);
 	}
 	list_iterator_destroy(job_iterator);
-
-	_compute_colocation_pairs();
-
 
 	sched_start = now;
 	last_job_alloc = now - 1;
@@ -234,6 +338,88 @@ static void _compute_start_times(void)
 	FREE_NULL_BITMAP(alloc_bitmap);
 }
 
+PyObject* _create_model_input(uint32_t jobs_to_colocate){
+	PyObject *pList;
+	PyObject *pTuple;
+	struct job_record *job_ptr = NULL;
+	ListIterator job_iterator;
+	int rc = 0;
+
+	debug5("COLOCATION: %s",__func__);
+
+	//COM zero a lista vem vazia
+	pList = PyList_New(0);
+	if(pList == NULL){
+		debug("COLOCATION: %s Couldn't allocate Model input list with size of %d",__func__,jobs_to_colocate);
+		return NULL;
+	}
+
+	while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
+		if(job_ptr->job_state == JOB_PENDING || 
+			job_ptr->job_state == JOB_SUSPENDED ){
+			pTuple = PyTuple_New(2);
+            PyTuple_SetItem(pTuple, 0, PyInt_AsLong(job_ptr->job_id));
+			PyTuple_SetItem(pTuple, 1, _read_job_profile_file(job_ptr));
+			//CONTINUAR ADICIONAR A TUPLA NA LISTA, RETORNAR A LISTA E PASSAR 
+			//PARA A FUNÇÂO COMPUTE_PAIRS
+			rc = PyList_Append(pList,pTuple);
+			if(rc != 0 ){
+				debug5("COLOCATION: %s tupla append error.",__func__);
+				return NULL;
+			}
+		}
+	}
+	list_iterator_destroy(job_iterator);
+
+	return pList;
+}
+
+PyObject* _read_job_profile_file(struct job_record *job_ptr){
+	PyObject *pList;
+	FILE *fp;
+	//const int perf_counters=153; // TODO: change this fixed number to be got on the fly
+	const int perf_counters=156; // Com CPU
+	const char separator[2]=",";
+	char *token;
+	char line[HARDWARE_COUNTER_STRING_SIZE];
+	double value;
+	int rc = 0;
+
+	debug5("COLOCATION: %s",__func__);
+
+	pList = PyList_New(0);
+	if(pList == NULL){
+		debug("COLOCATION: %s Couldn't allocate Performance counter list with size of %d",__func__,perf_counters);
+		return NULL;
+	}
+
+	//Investigate why the plugin isn't able to read it from /home/user.....
+	fp = fopen(job_ptr->hwprofile,"r");
+	if(fp == NULL){
+		debug5("COLOCATION: %s couldn't open file %s errno = %d",__func__,job_ptr->hwprofile,errno);
+		return NULL;
+	}
+
+	while(fgets(line, sizeof line, fp) != NULL){
+		token = strtok(line, separator);
+		while (token != NULL)
+		{
+			debug5("COLOCATION: %s token read %s.",__func__,token);
+			value = atof(token);
+			rc = PyList_Append(pList,PyFloat_FromDouble(value));
+			if(rc != 0 ){
+				debug5("COLOCATION: %s token %s append error.",__func__,token);
+				fclose(fp);
+				return NULL;
+			}			
+			token = strtok (NULL,separator);
+		}
+	}
+
+	fclose(fp);
+	return pList;
+}
+
 static void _compute_colocation_pairs(void){
 	PyObject *pName, *pModule, *pFunc;
     PyObject *pArgs, *pValue;
@@ -305,6 +491,11 @@ extern void *colocation_agent(void *args)
 		READ_LOCK, WRITE_LOCK, READ_LOCK, READ_LOCK, READ_LOCK };
 
 	_load_config();
+
+	//Initializing colocation structure
+	FREE_NULL_LIST(colocation_job_list);
+	colocation_job_list = list_create(NULL);
+
 	last_sched_time = time(NULL);
 	while (!stop_colocation) {
 		_my_sleep(colocation_interval);
@@ -320,10 +511,11 @@ extern void *colocation_agent(void *args)
 			continue;
 
 		lock_slurmctld(all_locks);
-		_compute_start_times();
+		_colocation_scheduling();
 		last_sched_time = time(NULL);
 		(void) bb_g_job_try_stage_in();
 		unlock_slurmctld(all_locks);
 	}
+	FREE_NULL_LIST(colocation_job_list);
 	return NULL;
 }
