@@ -171,15 +171,6 @@ static void _colocation_scheduling(void)
 	int j, rc = SLURM_SUCCESS, job_cnt = 0, jobs_to_colocate = 0;
 	List job_queue;
 	job_queue_rec_t *job_queue_rec;
-	List preemptee_candidates = NULL;
-	struct job_record *job_ptr = NULL;
-	struct part_record *part_ptr;
-	bitstr_t *alloc_bitmap = NULL, *avail_bitmap = NULL;
-	bitstr_t *exc_core_bitmap = NULL;
-	uint32_t max_nodes, min_nodes, req_nodes, time_limit;
-	time_t now = time(NULL), sched_start, last_job_alloc;
-	bool resv_overlap = false;
-	ListIterator job_iterator;
 	PyObject *pList = NULL;
 
 
@@ -205,144 +196,15 @@ static void _colocation_scheduling(void)
 	_compute_colocation_pairs(pList);
 
 
-	debug5("COLOCATION: %s job_list count = %d is empty = %d.",__func__,list_count(job_list),list_is_empty(job_list));
+	//debug5("COLOCATION: %s job_list count = %d is empty = %d.",__func__,list_count(job_list),list_is_empty(job_list));
+	//PyObject *tupla;
+	//if(pList != NULL || PyList_GET_SIZE(pList) > 0){
+	//	tupla = PyList_GetItem(pList,0);
+	//	debug5("COLOCATION: function %s Tupla[1] = %f size [2] = %d ",__func__,PyFloat_AsDouble(PyTuple_GetItem(tupla,0)),PyList_GET_SIZE(PyTuple_GetItem(tupla,1)));
+	//	Py_DECREF(tupla);
+	//}
+	//Py_XDECREF(pList);
 
-
-	PyObject *tupla;
-	if(pList != NULL || PyList_GET_SIZE(pList) > 0){
-		tupla = PyList_GetItem(pList,0);
-		debug5("COLOCATION: function %s Tupla[1] = %f size [2] = %d ",__func__,PyFloat_AsDouble(PyTuple_GetItem(tupla,0)),PyList_GET_SIZE(PyTuple_GetItem(tupla,1)));
-		Py_DECREF(tupla);
-	}
-	Py_XDECREF(pList);
-
-
-	//Testing how to get all the jobs, running or not
-	job_iterator = list_iterator_create(job_list);
-	while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
-		debug5("COLOCATION: function %s jobid %d job_status %d share_res %d priority %d.",__func__,job_ptr->job_id,job_ptr->job_state,job_ptr->details->share_res,job_ptr->priority);
-		//if(job_ptr->job_state == 1) _suspend_job(job_ptr->job_id);
-		
-		//if(job_ptr->job_id == 115 || job_ptr->job_id == 116 ){
-		//	//rc = job_requeue(0, job_ptr->job_id, NULL, true, 0);
-		//	if(job_ptr->job_state != 1 && job_ptr->priority != 0){
-		//		suspend_msg_t msg;
-		//		debug5("COLOCATION: SUSPENDING job_id %d",job_ptr->job_id);
-		//		msg.job_id = job_ptr->job_id;
-		//		msg.job_id_str = NULL;
-		//		msg.op = SUSPEND_JOB;
-		//		rc = job_suspend(&msg, 0, -1, false, NO_VAL16);
-//
-		//		job_ptr->priority = 0;
-		//		job_ptr->details->share_res = 1;
-		//	}
-		//	else{
-		//		if(job_ptr->priority == 0){
-		//			suspend_msg_t msg;
-		//			debug5("COLOCATION: RESUMING job_id %d",job_ptr->job_id);
-		//			msg.job_id = job_ptr->job_id;
-		//			msg.job_id_str = NULL;
-		//			msg.op = RESUME_JOB;
-		//			//rc = job_suspend(&msg, 0, -1, false, NO_VAL16);
-		//			rc = job_requeue(0, job_ptr->job_id, NULL, true, 0);
-//
-		//			job_ptr->priority = 100;
-		//			job_ptr->details->share_res = 1;
-		//		}
-//
-		//	}
-		//}
-		//if(job_ptr->job_state == 2) rc = job_requeue(0, job_ptr->job_id, NULL, true, 0);
-	}
-	list_iterator_destroy(job_iterator);
-
-	sched_start = now;
-	last_job_alloc = now - 1;
-	alloc_bitmap = bit_alloc(node_record_count);
-	job_queue = build_job_queue(true, false);
-	sort_job_queue(job_queue);
-	while ((job_queue_rec = (job_queue_rec_t *) list_pop(job_queue))) {
-		job_ptr  = job_queue_rec->job_ptr;
-		part_ptr = job_queue_rec->part_ptr;
-		xfree(job_queue_rec);
-
-		debug5("COLOCATION: function %s jobid %d hardware profile %s.",__func__,job_ptr->job_id,job_ptr->hwprofile);
-
-		if (part_ptr != job_ptr->part_ptr)
-			continue;	/* Only test one partition */
-
-		if (job_cnt++ > max_sched_job_cnt) {
-			debug2("scheduling loop exiting after %d jobs",
-			       max_sched_job_cnt);
-			break;
-		}
-
-		/* Determine minimum and maximum node counts */
-		/* On BlueGene systems don't adjust the min/max node limits
-		   here.  We are working on midplane values. */
-		min_nodes = MAX(job_ptr->details->min_nodes,
-				part_ptr->min_nodes);
-
-		if (job_ptr->details->max_nodes == 0)
-			max_nodes = part_ptr->max_nodes;
-		else
-			max_nodes = MIN(job_ptr->details->max_nodes,
-					part_ptr->max_nodes);
-
-		max_nodes = MIN(max_nodes, 500000);     /* prevent overflows */
-
-		if (job_ptr->details->max_nodes)
-			req_nodes = max_nodes;
-		else
-			req_nodes = min_nodes;
-
-		if (min_nodes > max_nodes) {
-			/* job's min_nodes exceeds partition's max_nodes */
-			continue;
-		}
-
-		j = job_test_resv(job_ptr, &now, true, &avail_bitmap,
-				  &exc_core_bitmap, &resv_overlap, false);
-		if (j != SLURM_SUCCESS) {
-			FREE_NULL_BITMAP(avail_bitmap);
-			FREE_NULL_BITMAP(exc_core_bitmap);
-			continue;
-		}
-
-		rc = select_g_job_test(job_ptr, avail_bitmap,
-				       min_nodes, max_nodes, req_nodes,
-				       SELECT_MODE_WILL_RUN,
-				       preemptee_candidates, NULL,
-				       exc_core_bitmap);
-		if (rc == SLURM_SUCCESS) {
-			last_job_update = now;
-			if (job_ptr->time_limit == INFINITE)
-				time_limit = 365 * 24 * 60 * 60;
-			else if (job_ptr->time_limit != NO_VAL)
-				time_limit = job_ptr->time_limit * 60;
-			else if (job_ptr->part_ptr &&
-				 (job_ptr->part_ptr->max_time != INFINITE))
-				time_limit = job_ptr->part_ptr->max_time * 60;
-			else
-				time_limit = 365 * 24 * 60 * 60;
-			if (bit_overlap(alloc_bitmap, avail_bitmap) &&
-			    (job_ptr->start_time <= last_job_alloc)) {
-				job_ptr->start_time = last_job_alloc;
-			}
-			bit_or(alloc_bitmap, avail_bitmap);
-			last_job_alloc = job_ptr->start_time + time_limit;
-		}
-		FREE_NULL_BITMAP(avail_bitmap);
-		FREE_NULL_BITMAP(exc_core_bitmap);
-
-		if ((time(NULL) - sched_start) >= sched_timeout) {
-			debug2("scheduling loop exiting after %d jobs",
-			       max_sched_job_cnt);
-			break;
-		}
-	}
-	FREE_NULL_LIST(job_queue);
-	FREE_NULL_BITMAP(alloc_bitmap);
 }
 
 PyObject* _create_model_input(void){
@@ -456,11 +318,6 @@ static void _compute_colocation_pairs(PyObject *pList){
 
         if (pFunc && PyCallable_Check(pFunc)) {
             pArgs = PyTuple_New(1);
-            //pValue = PyInt_FromLong(20);
-           // /* pValue reference stolen here: */
-            //PyTuple_SetItem(pArgs, 0, pValue);
-			//pValue = PyInt_FromLong(40);
-            //PyTuple_SetItem(pArgs, 1, pValue);
 			PyTuple_SetItem(pArgs, 0, pList);
 
 			debug5("COLOCATION: function %s calling PyObject_CallObject",__func__);
