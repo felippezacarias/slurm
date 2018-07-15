@@ -55,6 +55,7 @@ static int colocation_interval = COLOCATION_INTERVAL;
 static int max_sched_job_cnt = 50;
 static int sched_timeout = 0;
 static List colocation_job_list = (List) NULL;
+bool first_time = true;
 
 
 struct colocation_pairs {
@@ -71,8 +72,10 @@ static void _load_config(void);
 static void _my_sleep(int secs);
 static void _compute_colocation_pairs(PyObject *pList);
 static int _suspend_job(uint32_t job_id);
+static void _resume_job(uint32_t job_id);
 PyObject* _read_job_profile_file(struct job_record *job_ptr);
 PyObject* _create_model_input(void);
+static void _update_job_info(PyObject *pListColocation);
 
 
 
@@ -166,56 +169,93 @@ static int _suspend_job(uint32_t job_id)
 	return rc;
 }
 
+static void _resume_job(uint32_t job_id)
+{
+	int rc;
+	suspend_msg_t msg;
+
+	msg.job_id = job_id;
+	msg.job_id_str = NULL;
+	msg.op = RESUME_JOB;
+	rc = job_suspend(&msg, 0, -1, false, NO_VAL16);
+	if (rc == SLURM_SUCCESS) {
+		if (slurmctld_conf.debug_flags)
+			info("colocation: resuming JobID=%u", job_id);
+		else
+			debug("colocation: resuming JobID=%u", job_id);
+	} else if (rc != ESLURM_ALREADY_DONE) {
+		error("colocation: resuming JobID=%u: %s",
+		      job_id, slurm_strerror(rc));
+	}
+}
+
 static void _colocation_scheduling(void)
 {
 	int j, rc = SLURM_SUCCESS, job_cnt = 0, jobs_to_colocate = 0;
 	List job_queue;
+	struct job_record *job_ptr;
+	ListIterator job_iterator;
 	job_queue_rec_t *job_queue_rec;
 	PyObject *pList = NULL;
 
 
 	debug5("COLOCATION: %s colocation_job_list count = %d is empty = %d.",__func__,list_count(colocation_job_list),list_is_empty(colocation_job_list));
 	//First entrance or 
-	if(list_is_empty(colocation_job_list)){
+	//if(list_is_empty(colocation_job_list)){
+	if(first_time){
 		job_iterator = list_iterator_create(job_list);		
 		while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
 			////Counting number of jobs that actualy can be scheduled
-			if(job_ptr->job_state == 0 || job_ptr->job_state == 1) jobs_to_colocate++;
-			if(job_ptr->job_state == 1){
-				debug5("COLOCATION: SUSPENDING job_id %d",job_ptr->job_id);
+			if(job_ptr->job_state == JOB_PENDING || job_ptr->job_state == JOB_RUNNING) jobs_to_colocate++;
+			debug5("COLOCATION: job_id %u priority %u",job_ptr->job_id,job_ptr->priority);
+			if(job_ptr->job_state == JOB_RUNNING){
+				debug5("COLOCATION: SUSPENDING job_id %u priority %u",job_ptr->job_id,job_ptr->priority);
 				_suspend_job(job_ptr->job_id);
 			}
 		}
 		list_iterator_destroy(job_iterator);
+		first_time = false;
 	}
 
-	pList = _create_model_input();
-	debug5("COLOCATION: function %s Model list input size %d",__func__,PyList_GET_SIZE(pList));
+	if(jobs_to_colocate > 1 ){
+		pList = _create_model_input();
+		debug5("COLOCATION: function %s Model list input size %d",__func__,PyList_GET_SIZE(pList));
+	}
 
-	//Create degradation graph and compute colocation pairs
-	_compute_colocation_pairs(pList);
+	if(pList != NULL){
+		//Create degradation graph and compute colocation pairs
+		_compute_colocation_pairs(pList);
 
-
-	//debug5("COLOCATION: %s job_list count = %d is empty = %d.",__func__,list_count(job_list),list_is_empty(job_list));
-	//PyObject *tupla;
-	//if(pList != NULL || PyList_GET_SIZE(pList) > 0){
-	//	tupla = PyList_GetItem(pList,0);
-	//	debug5("COLOCATION: function %s Tupla[1] = %f size [2] = %d ",__func__,PyFloat_AsDouble(PyTuple_GetItem(tupla,0)),PyList_GET_SIZE(PyTuple_GetItem(tupla,1)));
-	//	Py_DECREF(tupla);
-	//}
-	//Py_XDECREF(pList);
-
+		//debug5("COLOCATION: %s job_list count = %d is empty = %d.",__func__,list_count(job_list),list_is_empty(job_list));
+		//PyObject *tupla;
+		//if(pList != NULL || PyList_GET_SIZE(pList) > 0){
+		//	tupla = PyList_GetItem(pList,0);
+		//	debug5("COLOCATION: function %s Tupla[1] = %f size [2] = %d ",__func__,PyFloat_AsDouble(PyTuple_GetItem(tupla,0)),PyList_GET_SIZE(PyTuple_GetItem(tupla,1)));
+		//	Py_DECREF(tupla);
+		//}
+		Py_XDECREF(pList);
+	}
+	else{
+		job_iterator = list_iterator_create(job_list);		
+		while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
+			if(job_ptr->job_state == JOB_SUSPENDED){
+				debug5("COLOCATION: RESUMING job_id %u",job_ptr->job_id);
+				_resume_job(job_ptr->job_id);
+			}
+		}
+		list_iterator_destroy(job_iterator);	
+	}
 }
 
 PyObject* _create_model_input(void){
-	PyObject *pList,*pProfileList;
+	PyObject *pList = NULL, *pProfileList;
 	PyObject *pTuple, *pValue;
 	struct job_record *job_ptr = NULL;
 	ListIterator job_iterator;
 	int rc = 0;
-	double id;
+	double job_id;
 
-	debug5("COLOCATION: %s",__func__);
+	debug5("COLOCATION: %s Initiated.",__func__);
 
 	//Allocating empty list
 	pList = PyList_New(0);
@@ -232,10 +272,10 @@ PyObject* _create_model_input(void){
 			job_ptr->job_state == JOB_RUNNING ){
 			pTuple = PyTuple_New(2);
 			//Adding info to de model as [(job_id,[perf_counters]),...]
-			id = job_ptr->job_id * 1.0f;
-			debug5("COLOCATION: %s PyFloat_FromDouble size %d job_id %f",__func__,PyTuple_Size(pTuple),id);
-			pValue = PyFloat_FromDouble(id);
-			debug5("COLOCATION: %s after PyFloat_FromDouble size %d job_id %f",__func__,PyTuple_Size(pTuple),id);
+			job_id = job_ptr->job_id * 1.0f;
+			debug5("COLOCATION: %s PyFloat_FromDouble size %d job_id %f",__func__,PyTuple_Size(pTuple),job_id);
+			pValue = PyFloat_FromDouble(job_id);
+			debug5("COLOCATION: %s after PyFloat_FromDouble size %d job_id %f",__func__,PyTuple_Size(pTuple),job_id);
             rc = PyTuple_SetItem(pTuple, 0, pValue);
 			debug5("COLOCATION: %s _read_job_profile_file ",__func__);
 			pProfileList = _read_job_profile_file(job_ptr);
@@ -299,10 +339,64 @@ PyObject* _read_job_profile_file(struct job_record *job_ptr){
 	return pList;
 }
 
+static void _update_job_info(PyObject *pListColocation){
+    PyObject *pValue;
+	int i, ngroups, colocation, rc = 0;
+	uint32_t job_id;
+	struct job_record *job_ptr = NULL;
+	struct job_record *job_ptr_sec = NULL;
+
+	debug5("colocation: %s initiated.",__func__);
+
+	ngroups = PyList_GET_SIZE(pListColocation);
+	debug5("colocation: %s ngroups = %d.",__func__,ngroups);
+	for(i = 0; i < ngroups; i++ ){
+		pValue = PyList_GetItem(pListColocation,i);
+		colocation = PyList_GET_SIZE(pValue);
+		if(colocation > 1){
+			job_id = (uint32_t) PyFloat_AsDouble(PyList_GetItem(pValue,0));
+			if ((job_ptr = find_job_record(job_id)) == NULL) {
+				debug5("colocation: %s could not find job %u",__func__,job_id);
+			}
+
+			job_id = (uint32_t) PyFloat_AsDouble(PyList_GetItem(pValue,1));
+			if ((job_ptr_sec = find_job_record(job_id)) == NULL) {
+				debug5("colocation: %s could not find job %u",__func__,job_id);
+			}
+
+			job_ptr_sec->priority = job_ptr->priority;
+			if(job_ptr->job_state == JOB_SUSPENDED){
+				debug5("colocation: %s Requeueing suspended job_id = %u.",__func__,job_ptr->job_id);
+				rc = job_requeue(0, job_ptr->job_id, NULL, true, 0);
+				if (rc == SLURM_SUCCESS) {
+					info("colocation: %s preempted job %u has been requeued",__func__,job_ptr->job_id);
+				}
+				job_ptr->priority = job_ptr_sec->priority;
+			}
+			
+			debug5("colocation: %s Jobs to share node jobid1 = %u jobid2 %u.",__func__,job_ptr->job_id,job_ptr_sec->job_id);
+
+			job_ptr->details->share_res = 1;
+			job_ptr_sec->details->share_res = 1;
+			
+		}
+		else{
+			job_id = (uint32_t) PyFloat_AsDouble(PyList_GetItem(pValue,0));
+			if ((job_ptr = find_job_record(job_id)) == NULL) {
+				debug5("colocation: %s could not find job %u",__func__,job_id);
+			}
+			job_ptr->details->share_res = 0;
+			debug5("colocation: %s Jobs to execute alone jobid = %u.",__func__,job_ptr->job_id);
+
+		}
+	}
+}
+
 static void _compute_colocation_pairs(PyObject *pList){
 	PyObject *pName, *pModule, *pFunc;
     PyObject *pArgs, *pValue, *pValue2;
-    int i;
+	//TODO: This limit can be passed through config variables
+    double degradation_limit = 100.0;
 
 	debug5("Colocation: %s Initiated input size %d.",__func__,PyList_GET_SIZE(pList) );
     Py_Initialize();
@@ -317,8 +411,12 @@ static void _compute_colocation_pairs(PyObject *pList){
         /* pFunc is a new reference */
 
         if (pFunc && PyCallable_Check(pFunc)) {
-            pArgs = PyTuple_New(1);
+            pArgs = PyTuple_New(2);
+			//Setting hardware counters list
 			PyTuple_SetItem(pArgs, 0, pList);
+			//Setting degradation limit to colocate jobs
+			PyTuple_SetItem(pArgs, 1, PyFloat_FromDouble(degradation_limit));
+
 
 			debug5("COLOCATION: function %s calling PyObject_CallObject",__func__);
 			pValue = PyObject_CallObject(pFunc, pArgs);
@@ -326,7 +424,11 @@ static void _compute_colocation_pairs(PyObject *pList){
             if (pValue != NULL) {
 				debug5("Colocation: %s value is_list %d value size %d",__func__,PyList_Check(pValue),PyList_GET_SIZE(pValue));
 				pValue2 = PyList_GetItem(pValue,0);
-				debug5("Colocation: %s Result of call: %f",__func__,PyFloat_AsDouble(PyTuple_GetItem(pValue2,0)));
+				debug5("Colocation: %s Result of call: %f",__func__,PyFloat_AsDouble(PyList_GetItem(pValue2,0)));
+				debug5("Colocation: %s Result of call: %f",__func__,PyFloat_AsDouble(PyList_GetItem(pValue2,1)));
+				_update_job_info(pValue);
+
+
 				//pArgs = PyList_GetItem(pValue,0);
 				//pValue2 = PyList_GetItem(pValue,1);
 				//debug5("COLOCATION: function %s Tupla[1] = %f size [2] = %d ",__func__,PyFloat_AsDouble(PyTuple_GetItem(pValue,0)),PyList_GET_SIZE(PyTuple_GetItem(pValue,1)));

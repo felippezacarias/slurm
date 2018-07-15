@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #Predicting the degradation through ML
-def colocation_pairs2(queue):
+def colocation_pairs2(queue, degradation_limit):
 
 	import sys
 	import pickle
@@ -54,13 +54,21 @@ def colocation_pairs2(queue):
 	for key in joblist_pairs:
 		jobid1 = key
 		jobid2 = blossom[key][0]
-		degradation = blossom[key][1]
-		schedule.append((jobid1, jobid2, degradation))
+		if(degradation > degradation_limit):
+				schedule.append([jobid1])
+				schedule.append([jobid2])
+		else:
+				schedule.append(sorted((jobid1, jobid2)))
 
-	return schedule
 
-def colocation_pairs(queue):
- 	return queue
+        schedule_s = sorted(schedule, key=lambda tup: tup[0])
+        return schedule_s
+
+
+def colocation_pairs(queue, degradation_limit):
+	tupla1 = queue[0]
+	tupla2 = queue[1]
+ 	return [[tupla1[0],tupla2[0]]]
 
 #lista = [(100,[1.19796833773087,0.238333808524628,9.23218997361478,4.91665113861468,1501199.31398417,1489795.36745549,13241816.1398417,7976065.99991967,295.997361477573,0.632031580898326,0.000262808815693145,0.000455307280223879,0.00190850490239199,0.00210457431042719]),
 #         (110,[0.572118811881188,0.00508516190513594,10,0,25448882.5188119,914046.608718328,242734893.304951,8682420.69484401,397,0,0.0034950700740341,3.15013362270567e-05,0.0333360270739527,0.000243981899186293]),
@@ -74,4 +82,4 @@ def colocation_pairs(queue):
 
 #ml = colocation_pairs(lista)
 #print("Model schedule = {r1}".format(r1=ml))
-
+#RESULT: [[jobid,jobid],[jobid]...] Model schedule = [[100, 110], [120], [140], [150, 190], [160], [180]]
