@@ -2,67 +2,72 @@
 #Predicting the degradation through ML
 def colocation_pairs2(queue, degradation_limit):
 
-	import sys
-	import pickle
+	try:
+		import sys
+		import pickle
 
-	sys.path.insert(0, 'graph/')
-	#Importing graph structure
-	from grafo import Grafo
-	from blossom_min import *
+		sys.path.insert(0, 'graph/')
+		#Importing graph structure
+		from grafo import Grafo
+		from blossom_min import *
 
-	grafo = Grafo()
-	schedule = []
-	apps_counters = {}
-	joblist = []
-
-
-	#creating dictionary for building degradation graph
-	for job in queue:
-		jobid = job[0]
-		apps_counters[jobid] = job[1]
-		joblist.append(jobid)
-
-	#Load machine learning model
-	#loaded_model = pickle.load(open("linear_regression.sav", 'rb'))
-	loaded_model = pickle.load(open("mlpregressor.sav", 'rb'))
-	#Load scaling used on training fase
-	scaling_model = pickle.load(open("scaling.sav", 'rb'))
-
-	#For each job create degradation graph
-	for jobMain in joblist:
-		for jobSecond in joblist:
-			if(jobMain != jobSecond):
-				prediction = apps_counters[jobMain] + apps_counters[jobSecond]
-				prediction_normalized = scaling_model.transform([prediction])
-				degradationMain = loaded_model.predict(prediction_normalized)
-
-				prediction = apps_counters[jobSecond] + apps_counters[jobMain]
-				prediction_normalized = scaling_model.transform([prediction])
-				degradationSecond = loaded_model.predict(prediction_normalized)
-						
-				#print("[{r1} {r2}]{r3} {r4}".format(r1=jobMain, r2=jobSecond, r3=degradationMain, r4=degradationSecond))	
-				#grafo.add_aresta(str(jobMain), str(jobSecond), max(degradationMain, degradationSecond))
-				grafo.add_aresta(jobMain, jobSecond, max(degradationMain[0], degradationSecond[0]))
+		grafo = Grafo()
+		schedule = []
+		apps_counters = {}
+		joblist = []
 
 
-	#Apply minimum weight perfect matching to find optimal co-schedule
-	blossom = min_weight_matching(grafo)
+		#creating dictionary for building degradation graph
+		for job in queue:
+			jobid = job[0]
+			apps_counters[jobid] = job[1]
+			joblist.append(jobid)
+
+		#Load machine learning model
+		#loaded_model = pickle.load(open("linear_regression.sav", 'rb'))
+		loaded_model = pickle.load(open("mlpregressor.sav", 'rb'))
+		#Load scaling used on training fase
+		scaling_model = pickle.load(open("scaling.sav", 'rb'))
+
+		#For each job create degradation graph
+		for jobMain in joblist:
+			for jobSecond in joblist:
+				if(jobMain != jobSecond):
+					prediction = apps_counters[jobMain] + apps_counters[jobSecond]
+					prediction_normalized = scaling_model.transform([prediction])
+					degradationMain = loaded_model.predict(prediction_normalized)
+
+					prediction = apps_counters[jobSecond] + apps_counters[jobMain]
+					prediction_normalized = scaling_model.transform([prediction])
+					degradationSecond = loaded_model.predict(prediction_normalized)
+							
+					#print("[{r1} {r2}]{r3} {r4}".format(r1=jobMain, r2=jobSecond, r3=degradationMain, r4=degradationSecond))	
+					#grafo.add_aresta(str(jobMain), str(jobSecond), max(degradationMain, degradationSecond))
+					grafo.add_aresta(jobMain, jobSecond, max(degradationMain[0], degradationSecond[0]))
 
 
-	#Creating Output
-	joblist_pairs = blossom.keys()
-	for key in joblist_pairs:
-		jobid1 = key
-		jobid2 = blossom[key][0]
-		if(degradation > degradation_limit):
-				schedule.append([jobid1])
-				schedule.append([jobid2])
-		else:
-				schedule.append(sorted((jobid1, jobid2)))
+		#Apply minimum weight perfect matching to find optimal co-schedule
+		blossom = min_weight_matching(grafo)
 
 
-        schedule_s = sorted(schedule, key=lambda tup: tup[0])
-        return schedule_s
+		#Creating Output
+		joblist_pairs = blossom.keys()
+		for key in joblist_pairs:
+			jobid1 = key
+			jobid2 = blossom[key][0]
+			if(degradation > degradation_limit):
+					schedule.append([jobid1])
+					schedule.append([jobid2])
+			else:
+					schedule.append(sorted((jobid1, jobid2)))
+
+
+			schedule_s = sorted(schedule, key=lambda tup: tup[0])
+			return schedule_s
+	except Exception, e:
+		with open('/tmp/PYTHON_ERROR.txt', 'w') as f:
+			print >> f, 'Filename:', str(e)  # Python 2.x
+			#print('Filename:', str(e), file=f)  # Python 3.x
 
 
 def colocation_pairs(queue, degradation_limit):
@@ -80,6 +85,6 @@ def colocation_pairs(queue, degradation_limit):
 #         (190,[0.408155172413793,0.233534551905015,51.6379310344828,3.27600938768327,381741718.386207,69824573.4375761,722329049.87069,129470196.932967,397,0,0.0817017213966283,0.0151262236985286,0.154510719911071,0.0284466280335838])]
 
 
-#ml = colocation_pairs(lista)
+#ml = colocation_pairs(lista,100)
 #print("Model schedule = {r1}".format(r1=ml))
 #RESULT: [[jobid,jobid],[jobid]...] Model schedule = [[100, 110], [120], [140], [150, 190], [160], [180]]
