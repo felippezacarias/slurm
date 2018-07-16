@@ -1,12 +1,18 @@
 # -*- coding: utf-8 -*-
 #Predicting the degradation through ML
-def colocation_pairs2(queue, degradation_limit):
+def colocation_pairs(queue, degradation_limit):
 
 	try:
 		import sys
+			
 		import pickle
 
-		sys.path.insert(0, 'graph/')
+		#Depois colocar esse "/opt/slurm/lib/degradation_model/" pra 
+		#ser pego da variável de ambiente
+		sys.path.insert(0, '/opt/slurm/lib/degradation_model/graph/')
+		#Arquivo apenas necessário para propósitos de debug
+		#with open('/tmp/PYTHON_PATH.txt', 'w') as f:
+		#	print >> f, 'Filename:', sys.path  # Python 2.x
 		#Importing graph structure
 		from grafo import Grafo
 		from blossom_min import *
@@ -25,9 +31,9 @@ def colocation_pairs2(queue, degradation_limit):
 
 		#Load machine learning model
 		#loaded_model = pickle.load(open("linear_regression.sav", 'rb'))
-		loaded_model = pickle.load(open("mlpregressor.sav", 'rb'))
+		loaded_model = pickle.load(open("/opt/slurm/lib/degradation_model/mlpregressor.sav", 'rb'))
 		#Load scaling used on training fase
-		scaling_model = pickle.load(open("scaling.sav", 'rb'))
+		scaling_model = pickle.load(open("/opt/slurm/lib/degradation_model/scaling.sav", 'rb'))
 
 		#For each job create degradation graph
 		for jobMain in joblist:
@@ -51,26 +57,34 @@ def colocation_pairs2(queue, degradation_limit):
 
 
 		#Creating Output
+		schedule_s = []
 		joblist_pairs = blossom.keys()
-		for key in joblist_pairs:
-			jobid1 = key
-			jobid2 = blossom[key][0]
-			if(degradation > degradation_limit):
-					schedule.append([jobid1])
-					schedule.append([jobid2])
-			else:
-					schedule.append(sorted((jobid1, jobid2)))
-
+		with open('/tmp/SLURM_PYTHON_SCHEDULE_DEBUG.txt', 'w') as f:
+			print >> f, 'PAIRS CREATED: ', blossom  # Python 2.x
+			for key in joblist_pairs:
+				jobid1 = key
+				jobid2 = blossom[key][0]
+				degradation = blossom[key][1]
+				if(degradation > degradation_limit):
+						schedule.append([jobid1])
+						schedule.append([jobid2])
+				else:
+						schedule.append(sorted((jobid1, jobid2)))
 
 			schedule_s = sorted(schedule, key=lambda tup: tup[0])
-			return schedule_s
+			print >> f, 'FINAL RESULT: ', schedule_s  # Python 2.x
+		f.closed
+
+		return schedule_s
+
 	except Exception, e:
-		with open('/tmp/PYTHON_ERROR.txt', 'w') as f:
+		with open('/tmp/SLURM_PYTHON_ERROR.txt', 'w') as f:
 			print >> f, 'Filename:', str(e)  # Python 2.x
 			#print('Filename:', str(e), file=f)  # Python 3.x
+		f.closed
 
 
-def colocation_pairs(queue, degradation_limit):
+def colocation_pairs2(queue, degradation_limit):
 	tupla1 = queue[0]
 	tupla2 = queue[1]
  	return [[tupla1[0],tupla2[0]]]
