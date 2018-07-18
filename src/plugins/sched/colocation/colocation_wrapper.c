@@ -72,5 +72,6 @@ int slurm_sched_p_reconfig(void)
 uint32_t slurm_sched_p_initial_priority(uint32_t last_prio,
 					struct job_record *job_ptr)
 {
-	return priority_g_set(last_prio, job_ptr);
+	//return priority_g_set(last_prio, job_ptr);
+	return 0; /* hold all new */
 }

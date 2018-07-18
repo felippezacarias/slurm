@@ -56,7 +56,7 @@ static int max_sched_job_cnt = 50;
 static int sched_timeout = 0;
 static List colocation_job_list = (List) NULL;
 bool first_time = true;
-uint32_t priority = 0;
+uint32_t priority = NO_VAL - 1;
 
 
 struct colocation_pairs {
@@ -209,8 +209,8 @@ static void _colocation_scheduling(void)
 		while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
 			if(job_ptr->job_state == JOB_PENDING){
 				jobs_to_colocate++;
-				if(job_ptr->priority > priority) priority = job_ptr->priority;
-				job_ptr->priority = 0;
+				//if(job_ptr->priority > priority) priority = job_ptr->priority;
+				//job_ptr->priority = 0;
  			}
 			debug5("COLOCATION: job_id %u priority %u share_res %d state_reason %u",job_ptr->job_id,job_ptr->priority,job_ptr->details->share_res,job_ptr->state_reason); 
 		}
@@ -223,6 +223,20 @@ static void _colocation_scheduling(void)
 		pList = _create_model_input();
 		debug5("COLOCATION: function %s Model list input size %d",__func__,PyList_GET_SIZE(pList));
 	}
+	//else{
+	//	job_queue = build_job_queue(true, false);
+	//	sort_job_queue(job_queue);
+	//	while ((job_queue_rec = (job_queue_rec_t *) list_pop(job_queue))) {
+	//		job_ptr  = job_queue_rec->job_ptr;
+	//		part_ptr = job_queue_rec->part_ptr;
+	//		xfree(job_queue_rec);
+//
+	//		job_ptr->priority = priority;
+	//		priority--;
+	//	}
+//
+	//	first_time = true;
+	//}
 
 	if(pList != NULL){
 		//Create degradation graph and compute colocation pairs
