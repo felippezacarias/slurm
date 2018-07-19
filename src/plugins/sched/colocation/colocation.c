@@ -57,6 +57,8 @@ static int sched_timeout = 0;
 static List colocation_job_list = (List) NULL;
 bool first_time = true;
 uint32_t priority = NO_VAL - 1;
+uint32_t previous_jobs_to_colocate = 0;
+
 
 
 struct colocation_pairs {
@@ -68,7 +70,8 @@ struct colocation_pairs {
 };
 
 /*********************** local functions *********************/
-static void _colocation_scheduling(void);
+static void _colocation_scheduling_dynamic(void);
+static void _colocation_scheduling_static(void);
 static void _load_config(void);
 static void _my_sleep(int secs);
 static void _compute_colocation_pairs(PyObject *pList);
@@ -190,54 +193,106 @@ static void _resume_job(uint32_t job_id)
 	}
 }
 
-static void _colocation_scheduling(void)
+static void _colocation_scheduling_dynamic(void)
 {
-	int j, rc = SLURM_SUCCESS, job_cnt = 0, jobs_to_colocate = 0;
+	int j, rc = SLURM_SUCCESS, job_cnt = 0;
+	uint32_t jobs_to_colocate = 0;
+	List job_queue;
+	struct job_record *job_ptr;
+	ListIterator job_iterator;
+	job_queue_rec_t *job_queue_rec;
+	PyObject *pList = NULL;
+	bool is_executing = false;
+
+
+	debug5("COLOCATION: %s colocation_job_list count = %d is empty = %d.",__func__,list_count(colocation_job_list),list_is_empty(colocation_job_list));
+
+	debug5("COLOCATION: %s entrou",__func__);
+	job_iterator = list_iterator_create(job_list);		
+	while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
+		if(job_ptr->job_state == JOB_PENDING) jobs_to_colocate++;
+		
+		if(job_ptr->job_state == JOB_RUNNING) is_executing = true;
+					
+		debug5("COLOCATION: job_id %u priority %u share_res %d state_reason %u",job_ptr->job_id,job_ptr->priority,job_ptr->details->share_res,job_ptr->state_reason); 
+	}
+	list_iterator_destroy(job_iterator);
+
+	if((jobs_to_colocate >= 1)){
+		if (jobs_to_colocate % 2 == 0){
+			pList = _create_model_input();
+			debug5("COLOCATION: function %s Model list input size %d",__func__,PyList_GET_SIZE(pList));
+		}
+		else{
+			if(!is_executing){
+				job_iterator = list_iterator_create(job_list);		
+				while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
+					if(job_ptr->job_state == JOB_PENDING){
+						job_ptr->priority = priority;
+						first_time = true;
+						break;
+					}
+				}
+				debug5("COLOCATION: job_id %u priority %u share_res %d state_reason %u",job_ptr->job_id,job_ptr->priority,job_ptr->details->share_res,job_ptr->state_reason); 
+			}
+		list_iterator_destroy(job_iterator);
+		}
+	}
+
+	if(pList != NULL){
+		//Create degradation graph and compute colocation pairs
+		_compute_colocation_pairs(pList);
+	
+		Py_XDECREF(pList);
+	}
+}
+
+static void _colocation_scheduling_static(void)
+{
+	int j, rc = SLURM_SUCCESS, job_cnt = 0;
+	uint32_t jobs_to_colocate = 0;
 	List job_queue;
 	struct job_record *job_ptr;
 	ListIterator job_iterator;
 	job_queue_rec_t *job_queue_rec;
 	PyObject *pList = NULL;
 
-
 	debug5("COLOCATION: %s colocation_job_list count = %d is empty = %d.",__func__,list_count(colocation_job_list),list_is_empty(colocation_job_list));
-	//First entrance or 
-	//if(list_is_empty(colocation_job_list)){
 	if(first_time){
 		debug5("COLOCATION: %s entrou first time",__func__);
 		job_iterator = list_iterator_create(job_list);		
 		while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
-			if(job_ptr->job_state == JOB_PENDING){
-				jobs_to_colocate++;
-				//if(job_ptr->priority > priority) priority = job_ptr->priority;
-				//job_ptr->priority = 0;
- 			}
+			if(job_ptr->job_state == JOB_PENDING) jobs_to_colocate++;
+
 			debug5("COLOCATION: job_id %u priority %u share_res %d state_reason %u",job_ptr->job_id,job_ptr->priority,job_ptr->details->share_res,job_ptr->state_reason); 
 		}
 		list_iterator_destroy(job_iterator);
 		//Rever essa questão
-		first_time = false;
+		if (jobs_to_colocate != 0) first_time = false;
 	}
 
-	if(jobs_to_colocate > 1 ){
-		pList = _create_model_input();
-		debug5("COLOCATION: function %s Model list input size %d",__func__,PyList_GET_SIZE(pList));
+	if((jobs_to_colocate >= 1)){
+		if (jobs_to_colocate % 2 == 0){
+			pList = _create_model_input();
+			debug5("COLOCATION: function %s Model list input size %d",__func__,PyList_GET_SIZE(pList));
+		}
+		else{
+			job_iterator = list_iterator_create(job_list);		
+			while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
+				if(job_ptr->job_state == JOB_PENDING){
+					job_ptr->priority = priority;
+					first_time = true;
+					break;
+				}
+				debug5("COLOCATION: job_id %u priority %u share_res %d state_reason %u",job_ptr->job_id,job_ptr->priority,job_ptr->details->share_res,job_ptr->state_reason); 
+			}
+			list_iterator_destroy(job_iterator);
+		}
 	}
 	//else{
-	//	job_queue = build_job_queue(true, false);
-	//	sort_job_queue(job_queue);
-	//	while ((job_queue_rec = (job_queue_rec_t *) list_pop(job_queue))) {
-	//		job_ptr  = job_queue_rec->job_ptr;
-	//		part_ptr = job_queue_rec->part_ptr;
-	//		xfree(job_queue_rec);
-//
-	//		job_ptr->priority = priority;
-	//		priority--;
-	//	}
-//
 	//	first_time = true;
 	//}
-
+	
 	if(pList != NULL){
 		//Create degradation graph and compute colocation pairs
 		_compute_colocation_pairs(pList);
@@ -501,7 +556,7 @@ extern void *colocation_agent(void *args)
 			continue;
 
 		lock_slurmctld(all_locks);
-		_colocation_scheduling();
+		_colocation_scheduling_static();
 		last_sched_time = time(NULL);
 		(void) bb_g_job_try_stage_in();
 		unlock_slurmctld(all_locks);
