@@ -9,7 +9,7 @@ def colocation_pairs(queue, degradation_limit):
 
 		#Depois colocar esse "/opt/slurm/lib/degradation_model/" pra 
 		#ser pego da variável de ambiente
-		sys.path.insert(0, '/opt/slurm_install/lib/degradation_model/graph/')
+		sys.path.insert(0, '/opt/slurm/lib/degradation_model/graph/')
 		#Arquivo apenas necessário para propósitos de debug
 		#with open('/tmp/PYTHON_PATH.txt', 'a') as f:
 		#	print >> f, 'Filename:', sys.path  # Python 2.x
@@ -31,9 +31,9 @@ def colocation_pairs(queue, degradation_limit):
 
 		#Load machine learning model
 		#loaded_model = pickle.load(open("linear_regression.sav", 'rb'))
-		loaded_model = pickle.load(open("/opt/slurm_install/lib/degradation_model/mlpregressor.sav", 'rb'))
+		loaded_model = pickle.load(open("/opt/slurm/lib/degradation_model/mlpregressor.sav", 'rb'))
 		#Load scaling used on training fase
-		scaling_model = pickle.load(open("/opt/slurm_install/lib/degradation_model/scaling.sav", 'rb'))
+		scaling_model = pickle.load(open("/opt/slurm/lib/degradation_model/scaling.sav", 'rb'))
 
 		#For each job create degradation graph
 		for jobMain in joblist:
@@ -60,6 +60,7 @@ def colocation_pairs(queue, degradation_limit):
 		schedule_s = []
 		joblist_pairs = blossom.keys()
 		with open('/tmp/SLURM_PYTHON_SCHEDULE_DEBUG.txt', 'a') as f:
+			print >> f, 'RESULT FROM EXECUTION:'
 			print >> f, 'PAIRS CREATED: ', blossom  # Python 2.x
 			for key in joblist_pairs:
 				jobid1 = key
@@ -80,6 +81,10 @@ def colocation_pairs(queue, degradation_limit):
 	except Exception, e:
 		with open('/tmp/SLURM_PYTHON_ERROR.txt', 'a') as f:
 			print >> f, 'Filename:', str(e)  # Python 2.x
+			print >> f, 'queue', queue
+			print >> f, 'type(queue)', type(queue)
+			print >> f, 'degradation_limit',degradation_limit
+			print >> f, 'type(degradation_limit)',type(degradation_limit)
 			#print('Filename:', str(e), file=f)  # Python 3.x
 		f.closed
 
@@ -92,7 +97,7 @@ def colocation_pairs_greedy(queue, degradation_limit):
 
 		#Depois colocar esse "/opt/slurm/lib/degradation_model/" pra 
 		#ser pego da variável de ambiente
-		sys.path.insert(0, '/opt/slurm_install/lib/degradation_model/graph/')
+		sys.path.insert(0, '/opt/slurm/lib/degradation_model/graph/')
 		#Arquivo apenas necessário para propósitos de debug
 		#with open('/tmp/PYTHON_PATH.txt', 'a') as f:
 		#	print >> f, 'Filename:', sys.path  # Python 2.x
@@ -114,9 +119,9 @@ def colocation_pairs_greedy(queue, degradation_limit):
 
 		#Load machine learning model
 		#loaded_model = pickle.load(open("linear_regression.sav", 'rb'))
-		loaded_model = pickle.load(open("/opt/slurm_install/lib/degradation_model/mlpregressor.sav", 'rb'))
+		loaded_model = pickle.load(open("/opt/slurm/lib/degradation_model/mlpregressor.sav", 'rb'))
 		#Load scaling used on training fase
-		scaling_model = pickle.load(open("/opt/slurm_install/lib/degradation_model/scaling.sav", 'rb'))
+		scaling_model = pickle.load(open("/opt/slurm/lib/degradation_model/scaling.sav", 'rb'))
 
 		for it in range(0,len(queue),1):
 			for j in range(it+1,len(queue),1):
@@ -140,6 +145,7 @@ def colocation_pairs_greedy(queue, degradation_limit):
 				list_jobid.append(tup[1])	
 
 		with open('/tmp/SLURM_PYTHON_SCHEDULE_DEBUG.txt', 'a') as f:
+			print >> f, 'RESULT FROM EXECUTION:'
 			print >> f, 'PAIRS CREATED: ', schedule  # Python 2.x
 			for tup in schedule:
 				degradation = tup[2]

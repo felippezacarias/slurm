@@ -44,7 +44,9 @@
 #  define COLOCATION_INTERVAL	30
 #endif
 
-#define HARDWARE_COUNTER_STRING_SIZE 2056
+#define COLOCATION_LIMIT	4
+//String size must be big otherwise it may broke with counter size
+#define HARDWARE_COUNTER_STRING_SIZE 8224
 
 /*********************** local variables *********************/
 static bool stop_colocation = false;
@@ -57,6 +59,7 @@ static int sched_timeout = 0;
 PyObject *pModule = NULL;
 uint32_t priority = NO_VAL - 1;
 uint32_t previous_jobs_to_colocate = 0;
+bool sched = true;
 
 
 /*********************** local functions *********************/
@@ -239,28 +242,34 @@ static void _colocation_scheduling_static(void)
 {
 	int j, rc = SLURM_SUCCESS, job_cnt = 0;
 	uint32_t jobs_to_colocate = 0;
-	uint32_t hold = 0;
+	uint32_t ready = 0;
 	List job_queue;
 	struct job_record *job_ptr;
 	ListIterator job_iterator;
 	job_queue_rec_t *job_queue_rec;
 	PyObject *pList = NULL;
-	bool sched = true;
-
+	
 	/* Ver problema de quando se cancela um job no meio de uma sequencia de jobs que share recurso */
 	debug5("COLOCATION: %s entrou first time",__func__);
 	job_iterator = list_iterator_create(job_list);		
 	while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
+		//if added only to perform tests
+		if(job_ptr->job_state == JOB_RUNNING) ready++;
 		if(job_ptr->job_state == JOB_PENDING){
+			//if added only to perform tests
+			if(job_ptr->priority != 0) ready++;
 			jobs_to_colocate++;		
-			if(job_ptr->priority == 0) sched = true;
+			if(job_ptr->priority == 0 && ready == 0){
+ 				 debug5("COLOCATION: %s jobs_to_colocate %u ready %u if sched = true",__func__,jobs_to_colocate,ready); 
+				 sched = true;
+			}
 		}
 
 		debug5("COLOCATION: job_id %u priority %u share_res %u state %u state_reason %u",job_ptr->job_id,job_ptr->priority,job_ptr->details->share_res,job_ptr->job_state,job_ptr->state_reason); 
 	}
 	list_iterator_destroy(job_iterator);
 
-	debug5("COLOCATION: %s jobs_to_colocate %u hold %u",__func__,jobs_to_colocate,hold); 
+	debug5("COLOCATION: %s jobs_to_colocate %u ready %u",__func__,jobs_to_colocate,ready); 
 
     if (jobs_to_colocate == 0) priority = NO_VAL - 1;
 
@@ -298,6 +307,7 @@ PyObject* _create_model_input(void){
 	PyObject *pTuple, *pValue;
 	struct job_record *job_ptr = NULL;
 	ListIterator job_iterator;
+	uint32_t job_coaloc = 0;
 	int rc = 0;
 	double job_id;
 
@@ -313,8 +323,10 @@ PyObject* _create_model_input(void){
 	job_iterator = list_iterator_create(job_list);
 	debug5("COLOCATION: %s Creating list",__func__);
 	while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
-		debug5("COLOCATION: %s Job_id %u  job_state %u ",__func__,job_ptr->job_id,job_ptr->job_state);
+		debug5("COLOCATION: %s Job_id %u  job_state %u job_coaloc %u ",__func__,job_ptr->job_id,job_ptr->job_state,job_coaloc);
+		if(job_coaloc == COLOCATION_LIMIT) break;
 		if(job_ptr->job_state == JOB_PENDING){
+			job_coaloc++;
 			//holding job to prevent scheduling while computing colocation
 			job_ptr->priority = 0;
 			pTuple = PyTuple_New(2);
@@ -371,7 +383,7 @@ PyObject* _read_job_profile_file(struct job_record *job_ptr){
 		token = strtok(line, separator);
 		while (token != NULL)
 		{
-			//debug5("COLOCATION: %s token read %s.",__func__,token);
+			//debug5("COLOCATION: %s job_id %u file %s token read %s.",__func__,job_ptr->job_id,job_ptr->hwprofile,token);
 			value = atof(token);
 			rc = PyList_Append(pList,PyFloat_FromDouble(value));
 			if(rc != 0 ){
