@@ -44,6 +44,8 @@
 #  define COLOCATION_INTERVAL	30
 #endif
 
+#define COLOCATION_LIMIT	4
+
 #define HARDWARE_COUNTER_STRING_SIZE 12056
 
 /*********************** local variables *********************/
@@ -59,6 +61,7 @@ PyObject *pModule;
 PyObject *pFunc = NULL;
 uint32_t priority = NO_VAL - 1;
 uint32_t previous_jobs_to_colocate = 0;
+bool sched = true;
 
 
 
@@ -252,7 +255,7 @@ static void _colocation_scheduling_static(void)
 {
 	int j, rc = SLURM_SUCCESS, job_cnt = 0;
 	uint32_t jobs_to_colocate = 0;
-	uint32_t hold = 0;
+	uint32_t ready = 0;
 	List job_queue;
 	struct job_record *job_ptr;
 	ListIterator job_iterator;
@@ -264,23 +267,29 @@ static void _colocation_scheduling_static(void)
 	debug5("COLOCATION: %s entrou first time",__func__);
 	job_iterator = list_iterator_create(job_list);		
 	while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
+		if(job_ptr->job_state == JOB_RUNNING) ready++;
 		if(job_ptr->job_state == JOB_PENDING){
 			jobs_to_colocate++;
-			if(job_ptr->priority == 0) hold++;
+			if(job_ptr->priority != 0) ready++;
+			if(job_ptr->priority == 0 && ready == 0){
+ 				 debug5("COLOCATION: %s jobs_to_colocate %u ready %u if sched = true",__func__,jobs_to_colocate,ready); 
+				 sched = true;
+			}
 		}
 
 		debug5("COLOCATION: job_id %u priority %u share_res %d state %u state_reason %u",job_ptr->job_id,job_ptr->priority,job_ptr->details->share_res,job_ptr->job_state,job_ptr->state_reason); 
 	}
 	list_iterator_destroy(job_iterator);
 
-	debug5("COLOCATION: %s jobs_to_colocate %u hold %u",__func__,jobs_to_colocate,hold); 
+	debug5("COLOCATION: %s jobs_to_colocate %u ready %u",__func__,jobs_to_colocate,ready); 
 
     if (jobs_to_colocate == 0) priority = NO_VAL - 1;
 
-	if((jobs_to_colocate >= 1) && (hold > 0)){
+	if((jobs_to_colocate >= 1) && sched){
 		if (jobs_to_colocate % 2 == 0){
 			pList = _create_model_input();
 			debug5("COLOCATION: function %s Model list input size %d",__func__,PyList_GET_SIZE(pList));
+			sched = false;
 		}
 		else{
 			job_iterator = list_iterator_create(job_list);		
@@ -288,6 +297,7 @@ static void _colocation_scheduling_static(void)
 				if(job_ptr->job_state == JOB_PENDING && job_ptr->priority == 0){
 					job_ptr->priority = priority;
 					priority--;
+					sched = true;
 					break;
 				}
 				debug5("COLOCATION: job_id %u priority %u share_res %d state_reason %u",job_ptr->job_id,job_ptr->priority,job_ptr->details->share_res,job_ptr->state_reason); 
@@ -311,6 +321,7 @@ PyObject* _create_model_input(void){
 	ListIterator job_iterator;
 	int rc = 0;
 	double job_id;
+	uint32_t job_coaloc = 0;
 
 	debug5("COLOCATION: %s Initiated.",__func__);
 
@@ -324,8 +335,10 @@ PyObject* _create_model_input(void){
 	job_iterator = list_iterator_create(job_list);
 	debug5("COLOCATION: %s Creating list",__func__);
 	while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
-		debug5("COLOCATION: %s Job_id %u  job_state %u ",__func__,job_ptr->job_id,job_ptr->job_state);
+		debug5("COLOCATION: %s Job_id %u  job_state %u job_coaloc %u",__func__,job_ptr->job_id,job_ptr->job_state,job_coaloc);
+		if(job_coaloc == COLOCATION_LIMIT) break;
 		if(job_ptr->job_state == JOB_PENDING){
+			job_coaloc++;
 			//holding job to prevent scheduling while computing colocation
 			job_ptr->priority = 0;
 			pTuple = PyTuple_New(2);
