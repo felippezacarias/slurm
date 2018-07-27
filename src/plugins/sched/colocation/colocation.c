@@ -44,7 +44,7 @@
 #  define COLOCATION_INTERVAL	30
 #endif
 
-#define HARDWARE_COUNTER_STRING_SIZE 2056
+#define HARDWARE_COUNTER_STRING_SIZE 12056
 
 /*********************** local variables *********************/
 static bool stop_colocation = false;
@@ -56,6 +56,7 @@ static int max_sched_job_cnt = 50;
 static int sched_timeout = 0;
 static List colocation_job_list = (List) NULL;
 PyObject *pModule;
+PyObject *pFunc = NULL;
 uint32_t priority = NO_VAL - 1;
 uint32_t previous_jobs_to_colocate = 0;
 
@@ -229,7 +230,7 @@ static void _colocation_scheduling_dynamic(void)
 				while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
 					if(job_ptr->job_state == JOB_PENDING){
 						job_ptr->priority = priority;
-						first_time = true;
+						
 						break;
 					}
 				}
@@ -449,7 +450,7 @@ static void _update_job_info(PyObject *pListColocation){
 
 static void _compute_colocation_pairs(PyObject *pList){
 	//PyObject *pName, *pModule, *pFunc;
-	PyObject *pFunc;
+	
     PyObject *pArgs, *pValue, *pValue2;
 	//TODO: This limit can be passed through config variables
     double degradation_limit = 100.0;
@@ -457,7 +458,7 @@ static void _compute_colocation_pairs(PyObject *pList){
 	debug5("Colocation: %s Initiated input size %d.",__func__,PyList_GET_SIZE(pList) );
 
     if (pModule != NULL) {
-        pFunc = PyObject_GetAttrString(pModule, "colocation_pairs");
+        if(pFunc == NULL) pFunc = PyObject_GetAttrString(pModule, "colocation_pairs");
         /* pFunc is a new reference */
 
         if (pFunc && PyCallable_Check(pFunc)) {
@@ -482,7 +483,7 @@ static void _compute_colocation_pairs(PyObject *pList){
 			debug5("COLOCATION: function %s calling PyObject_CallObject",__func__);
 			pValue = PyObject_CallObject(pFunc, pArgs);
             if (pValue != NULL) {
-				debug5("Colocation: %s after PyObject_CallObject value is_list %d value size %d",__func__,PyList_Check(pValue),PyList_GET_SIZE(pValue));
+				debug5("Colocation: %s after PyObject_CallObject value is_list %d value size %d type_res %s",__func__,PyList_Check(pValue),PyList_GET_SIZE(pValue),PyString_AsString(PyObject_Str(pValue)));
 				pValue2 = PyList_GetItem(pValue,0);
 				debug5("Colocation: %s Result of call: %f",__func__,PyFloat_AsDouble(PyList_GetItem(pValue2,0)));
 				debug5("Colocation: %s Result of call: %f",__func__,PyFloat_AsDouble(PyList_GetItem(pValue2,1)));
@@ -494,20 +495,25 @@ static void _compute_colocation_pairs(PyObject *pList){
 				//debug5("COLOCATION: function %s Tupla[1] = %f size [2] = %d ",__func__,PyFloat_AsDouble(PyTuple_GetItem(pValue,0)),PyList_GET_SIZE(PyTuple_GetItem(pValue,1)));
 				Py_DECREF(pArgs);
                 Py_DECREF(pValue);
+				Py_XDECREF(pList);
+				Py_XDECREF(pValue2);
             }
             else {
-                Py_DECREF(pFunc);
-                Py_DECREF(pModule);
+                //Py_DECREF(pFunc);
+				//pFunc = NULL;
+                //Py_DECREF(pModule);
                 PyErr_Print();
+				PyErr_Clear();
 				debug5("Colocation: %s Call failed!",__func__);
             }
         }
         else {
             if (PyErr_Occurred())
                 PyErr_Print();
-			debug5("Colocation: %s Cannot find function colocation_pairs!",__func__);            
+			debug5("Colocation: %s Cannot find function colocation_pairs!",__func__);
+			//pFunc = NULL;           
         }
-        Py_XDECREF(pFunc);
+        //Py_XDECREF(pFunc);
     }
 
 }
@@ -568,6 +574,7 @@ extern void *colocation_agent(void *args)
 		unlock_slurmctld(all_locks);
 	}
     Py_XDECREF(pModule);
+	Py_XDECREF(pFunc);
 	Py_Finalize();
 	FREE_NULL_LIST(colocation_job_list);
 	return NULL;
