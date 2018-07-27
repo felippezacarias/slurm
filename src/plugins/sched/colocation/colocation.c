@@ -496,6 +496,10 @@ static void _compute_colocation_pairs(PyObject *pList){
 			debug5("COLOCATION: function %s calling PyObject_CallObject",__func__);
 			pValue = PyObject_CallObject(pFunc, pArgs);
             if (pValue != NULL) {
+				if (pValue == Py_None){
+					debug5("Colocation: %s after PyObject_CallObject result is [%s]",__func__,PyString_AsString(PyObject_Str(pValue)));
+					return;
+				} 
 				debug5("Colocation: %s after PyObject_CallObject value is_list %d value size %d type_res %s",__func__,PyList_Check(pValue),PyList_GET_SIZE(pValue),PyString_AsString(PyObject_Str(pValue)));
 				pValue2 = PyList_GetItem(pValue,0);
 				debug5("Colocation: %s Result of call: %f",__func__,PyFloat_AsDouble(PyList_GetItem(pValue2,0)));
