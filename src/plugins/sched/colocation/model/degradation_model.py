@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 #Predicting the degradation through ML
-def colocation_pairs(queue, degradation_limit):
+#using the blossom algorithm
+def colocation_pairs_optimal(queue, degradation_limit):
 
 	try:
 		import sys
@@ -92,6 +93,91 @@ def colocation_pairs(queue, degradation_limit):
 			print >> f, 'Filename:', type(degradation_limit)  # Python 2.x
 			#print('Filename:', str(e), file=f)  # Python 3.x
 		f.closed
+
+#Greedy approach
+def colocation_pairs(queue, degradation_limit):
+
+	try:
+		import sys
+			
+		import pickle
+
+		#Depois colocar esse "/opt/slurm/lib/degradation_model/" pra 
+		#ser pego da variável de ambiente
+		sys.path.insert(0, '/opt/slurm/lib/degradation_model/graph/')
+		#Arquivo apenas necessário para propósitos de debug
+		#with open('/tmp/PYTHON_PATH.txt', 'a') as f:
+		#	print >> f, 'Filename:', sys.path  # Python 2.x
+
+
+		schedule = []
+		apps_counters = {}
+		joblist = []
+		greedy_list = []
+		list_jobid = []
+		schedule_s = []
+
+
+		#creating dictionary for building degradation graph
+		for job in queue:
+			jobid = job[0]
+			apps_counters[jobid] = job[1]
+			joblist.append(jobid)
+
+		#Load machine learning model
+		#loaded_model = pickle.load(open("linear_regression.sav", 'rb'))
+		loaded_model = pickle.load(open("/opt/slurm/lib/degradation_model/mlpregressor.sav", 'rb'))
+		#Load scaling used on training fase
+		scaling_model = pickle.load(open("/opt/slurm/lib/degradation_model/scaling.sav", 'rb'))
+
+		for it in range(0,len(queue),1):
+			for j in range(it+1,len(queue),1):
+				#print("job1 = {r1} job2 = {r2}".format(r1=joblist[it],r2=joblist[j])) 
+				prediction = apps_counters[joblist[it]] + apps_counters[joblist[j]]
+				prediction_normalized = scaling_model.transform([prediction])
+
+				degradationMain = loaded_model.predict(prediction_normalized)
+				prediction = apps_counters[joblist[j]] + apps_counters[joblist[it]]
+				prediction_normalized = scaling_model.transform([prediction])
+				degradationSecond = loaded_model.predict(prediction_normalized)
+					
+				greedy_list.append((joblist[it], joblist[j], max(degradationMain[0], degradationSecond[0])))
+
+
+		greedy_list = sorted(greedy_list, key=lambda tup: tup[2])
+		for tup in greedy_list:
+			if not (set([tup[0]]).issubset(list_jobid) or set([tup[1]]).issubset(list_jobid)):
+				schedule.append(tup)
+				list_jobid.append(tup[0])
+				list_jobid.append(tup[1])	
+
+		with open('/tmp/SLURM_PYTHON_SCHEDULE_GREEDY_DEBUG.txt', 'a') as f:
+			print >> f, 'EXECUTION:'  # Python 2.x
+			print >> f, 'GREEDY_LIST: ', greedy_list
+			print >> f, 'PAIRS CREATED: ', schedule  # Python 2.x
+			for tup in schedule:
+				degradation = tup[2]
+				if(degradation > degradation_limit):
+						schedule_s.append([tup[0]])
+						schedule_s.append([tup[1]])
+				else:
+						schedule_s.append(sorted((tup[0], tup[1])))
+
+			schedule_s = sorted(schedule_s, key=lambda tup: tup[0])
+			print >> f, 'FINAL SCHEDULE: ', schedule_s  # Python 2.x
+
+		return schedule_s
+
+	except Exception, e:
+		with open('/tmp/SLURM_PYTHON_GREEDY_ERROR.txt', 'a') as f:
+			print >> f, 'Filename:', type(e)  # Python 2.x
+			print >> f, 'Filename:', str(e)  # Python 2.x
+			print >> f, 'Filename:', type(queue)  # Python 2.x
+			print >> f, 'degradation_limit:', degradation_limit  # Python 2.x
+			print >> f, 'Filename:', type(degradation_limit)  # Python 2.x
+			#print('Filename:', str(e), file=f)  # Python 3.x
+		f.closed
+
 
 
 def colocation_pairs2(queue, degradation_limit):
