@@ -1,15 +1,20 @@
 # -*- coding: utf-8 -*-
 #Predicting the degradation through ML
-def colocation_pairs(queue, degradation_limit):
+#optimal
+def colocation_pairs_optimal(queue, degradation_limit):
+#def colocation_pairs(queue, degradation_limit):
 
 	try:
 		import sys
+		import time
 			
 		import pickle
 
+		start_tot = time.time()
+
 		#Depois colocar esse "/opt/slurm/lib/degradation_model/" pra 
 		#ser pego da variável de ambiente
-		sys.path.insert(0, '/opt/slurm/lib/degradation_model/graph/')
+		sys.path.insert(0, '/opt/slurm_teste_final/lib/degradation_model/graph/')
 		#Arquivo apenas necessário para propósitos de debug
 		#with open('/tmp/PYTHON_PATH.txt', 'a') as f:
 		#	print >> f, 'Filename:', sys.path  # Python 2.x
@@ -31,37 +36,93 @@ def colocation_pairs(queue, degradation_limit):
 
 		#Load machine learning model
 		#loaded_model = pickle.load(open("linear_regression.sav", 'rb'))
-		loaded_model = pickle.load(open("/opt/slurm/lib/degradation_model/mlpregressor.sav", 'rb'))
+		loaded_model = pickle.load(open("/opt/slurm_teste_final/lib/degradation_model/mlpregressor.sav", 'rb'))
+		#loaded_model = pickle.load(open("/opt/slurm_teste_final/lib/degradation_model/random_forest.sav", 'rb'))
 		#Load scaling used on training fase
-		scaling_model = pickle.load(open("/opt/slurm/lib/degradation_model/scaling.sav", 'rb'))
+		scaling_model = pickle.load(open("/opt/slurm_teste_final/lib/degradation_model/scaling.sav", 'rb'))
+
+		time_predict = 0.0
+		time_graph = 0.0
+		time_append = 0.0
+		time_scaling = 0.0
+		count = 0
+
+
+		for it in range(0,len(queue),1):
+			for j in range(it+1,len(queue),1):
+				count += 1
+				#print("job1 = {r1} job2 = {r2}".format(r1=joblist[it],r2=joblist[j]))
+				start = time.time() 
+				prediction = apps_counters[joblist[it]] + apps_counters[joblist[j]]
+				time_append += (time.time() - start)
+				start = time.time()
+				prediction_normalized = scaling_model.transform([prediction])
+				time_scaling += (time.time() - start)
+				start = time.time()
+				degradationMain = loaded_model.predict(prediction_normalized)
+				time_predict += (time.time() - start)
+
+				start = time.time()
+				prediction = apps_counters[joblist[j]] + apps_counters[joblist[it]]
+                                time_append += (time.time() - start)
+                                start = time.time()
+				prediction_normalized = scaling_model.transform([prediction])
+				time_scaling += (time.time() - start)
+				start = time.time()
+				degradationSecond = loaded_model.predict(prediction_normalized)
+				time_predict += (time.time() - start)
+
+				start = time.time()
+				grafo.add_aresta(joblist[it], joblist[j], max(degradationMain[0], degradationSecond[0]))
+				time_graph += (time.time() - start)
+
+				
 
 		#For each job create degradation graph
-		for jobMain in joblist:
-			for jobSecond in joblist:
-				if(jobMain != jobSecond):
-					prediction = apps_counters[jobMain] + apps_counters[jobSecond]
-					prediction_normalized = scaling_model.transform([prediction])
-					degradationMain = loaded_model.predict(prediction_normalized)
+		#for jobMain in joblist:
+		#	for jobSecond in joblist:
+		#		if(jobMain != jobSecond):
+		#			count += 1
+		#			start = time.time()
+		#			prediction = apps_counters[jobMain] + apps_counters[jobSecond]
+		#			time_append += (time.time() - start)
+		#			start = time.time()
+		#			prediction_normalized = scaling_model.transform([prediction])
+		#			time_scaling += (time.time() - start)
+		#			start = time.time()
+		#			degradationMain = loaded_model.predict(prediction_normalized)
+		#			time_predict += (time.time() - start)
 
-					prediction = apps_counters[jobSecond] + apps_counters[jobMain]
-					prediction_normalized = scaling_model.transform([prediction])
-					degradationSecond = loaded_model.predict(prediction_normalized)
-							
+		#			start = time.time()
+		#			prediction = apps_counters[jobSecond] + apps_counters[jobMain]
+		#			time_append += (time.time() - start)
+		#			start = time.time()
+		#			prediction_normalized = scaling_model.transform([prediction])
+		#			time_scaling += (time.time() - start)
+		#			start = time.time()
+		#			degradationSecond = loaded_model.predict(prediction_normalized)
+		#			time_predict += (time.time() - start)
+
 					#print("[{r1} {r2}]{r3} {r4}".format(r1=jobMain, r2=jobSecond, r3=degradationMain, r4=degradationSecond))	
 					#grafo.add_aresta(str(jobMain), str(jobSecond), max(degradationMain, degradationSecond))
-					grafo.add_aresta(jobMain, jobSecond, max(degradationMain[0], degradationSecond[0]))
+		#			start = time.time()
+		#			grafo.add_aresta(jobMain, jobSecond, max(degradationMain[0], degradationSecond[0]))
+		#			time_graph += (time.time() - start)
 
 
 		#Apply minimum weight perfect matching to find optimal co-schedule
+		start = time.time()
 		blossom = min_weight_matching(grafo)
-
+		time_blossom = time.time() - start
 
 		#Creating Output
 		schedule_s = []
+		start = time.time()
 		joblist_pairs = blossom.keys()
 		with open('/tmp/SLURM_PYTHON_SCHEDULE_DEBUG.txt', 'a') as f:
-			print >> f, 'EXECUTION:'  # Python 2.x
-			print >> f, 'PAIRS CREATED: ', blossom  # Python 2.x
+			#print >> f, 'EXECUTION: ', len(queue)  # Python 2.x
+			#print >> f, 'Entrou: ', count
+			#print >> f, 'PAIRS CREATED: ', blossom  # Python 2.x
 			for key in joblist_pairs:
 				jobid1 = key
 				jobid2 = blossom[key][0]
@@ -72,8 +133,13 @@ def colocation_pairs(queue, degradation_limit):
 				else:
 						schedule.append(sorted((jobid1, jobid2)))
 
+			time_tresh = time.time() - start
+			start = time.time()
 			schedule_s = sorted(schedule, key=lambda tup: tup[0])
-			print >> f, 'FINAL RESULT: ', schedule_s  # Python 2.x
+			time_sort = time.time() - start
+			#print >> f, 'FINAL RESULT: ', schedule_s  # Python 2.x
+			print >> f, 'queue_len ', len(queue), 'time_tot ', (time.time() - start_tot ),'time_append ',time_append,'time_scaling ',time_scaling, 'time_predict ',time_predict,'time_graph ',time_graph, 'time_blossom ',time_blossom ,'time_tresh ',time_tresh ,'time_sort ',time_sort # Python 2.x
+			#print >> f, 'FINAL RESULT: ', schedule_s  # Python 2.x
 		f.closed
 
 		return schedule_s
@@ -93,11 +159,155 @@ def colocation_pairs(queue, degradation_limit):
 			#print('Filename:', str(e), file=f)  # Python 3.x
 		f.closed
 
+#Greedy approach
+def colocation_pairs_greedy(queue, degradation_limit):
+#def colocation_pairs(queue, degradation_limit):
+
+	try:
+		import sys
+		import time
+	
+		import pickle
+
+		start_tot = time.time()
+
+		#Depois colocar esse "/opt/slurm/lib/degradation_model/" pra 
+		#ser pego da variável de ambiente
+		sys.path.insert(0, '/opt/slurm_teste_final/lib/degradation_model/graph/')
+		#Arquivo apenas necessário para propósitos de debug
+		#with open('/tmp/PYTHON_PATH.txt', 'a') as f:
+		#	print >> f, 'Filename:', sys.path  # Python 2.x
+
+
+		schedule = []
+		apps_counters = {}
+		joblist = []
+		greedy_list = []
+		list_jobid = []
+		schedule_s = []
+
+
+		#creating dictionary for building degradation graph
+		for job in queue:
+			jobid = job[0]
+			apps_counters[jobid] = job[1]
+			joblist.append(jobid)
+
+		#Load machine learning model
+		#loaded_model = pickle.load(open("/opt/slurm_teste_final/lib/degradation_model/random_forest.sav", 'rb'))
+		loaded_model = pickle.load(open("/opt/slurm_teste_final/lib/degradation_model/mlpregressor.sav", 'rb'))
+		#Load scaling used on training fase
+		scaling_model = pickle.load(open("/opt/slurm_teste_final/lib/degradation_model/scaling.sav", 'rb'))
+
+		time_predict = 0.0
+		time_graph = 0.0
+		time_greedy_list = 0.0
+		time_append = 0.0
+		time_scaling = 0.0
+		contador = 0.0
+
+		for it in range(0,len(queue),1):
+			for j in range(it+1,len(queue),1):
+				contador = contador + 1.0
+				#print("job1 = {r1} job2 = {r2}".format(r1=joblist[it],r2=joblist[j]))
+				start = time.time() 
+				prediction = apps_counters[joblist[it]] + apps_counters[joblist[j]]
+				time_append += (time.time() - start)
+				start = time.time()
+				prediction_normalized = scaling_model.transform([prediction])
+				time_scaling += (time.time() - start)
+				start = time.time()
+				degradationMain = loaded_model.predict(prediction_normalized)
+				time_predict += (time.time() - start)
+
+				start = time.time()
+				prediction = apps_counters[joblist[j]] + apps_counters[joblist[it]]
+                                time_append += (time.time() - start)
+                                start = time.time()
+				prediction_normalized = scaling_model.transform([prediction])
+				time_scaling += (time.time() - start)
+				start = time.time()
+				degradationSecond = loaded_model.predict(prediction_normalized)
+				time_predict += (time.time() - start)
+				
+				start = time.time()
+				greedy_list.append((joblist[it], joblist[j], max(degradationMain[0], degradationSecond[0])))
+				time_greedy_list += (time.time() - start)
+
+
+		start = time.time()
+		greedy_list = sorted(greedy_list, key=lambda tup: tup[2])
+		for tup in greedy_list:
+			if not (set([tup[0]]).issubset(list_jobid) or set([tup[1]]).issubset(list_jobid)):
+				schedule.append(tup)
+				list_jobid.append(tup[0])
+				list_jobid.append(tup[1])
+		time_greedy_sort = time.time() - start
+
+		with open('/tmp/SLURM_PYTHON_SCHEDULE_GREEDY_DEBUG.txt', 'a') as f:
+			#print >> f, 'EXECUTION: ',len(queue)  # Python 2.x
+			#print >> f, 'Entrou: ', contador
+			#print >> f, 'GREEDY_LIST: ', greedy_list
+			#print >> f, 'PAIRS CREATED: ', schedule  # Python 2.x
+			start = time.time()
+			for tup in schedule:
+				degradation = tup[2]
+				if(degradation > degradation_limit):
+						schedule_s.append([tup[0]])
+						schedule_s.append([tup[1]])
+				else:
+						schedule_s.append(sorted((tup[0], tup[1])))
+
+			time_tresh = time.time() - start
+			start = time.time()
+			schedule_s = sorted(schedule_s, key=lambda tup: tup[0])
+			time_sort = time.time() - start
+			#print >> f, 'FINAL SCHEDULE: ', schedule_s  # Python 2.x
+			print >> f,'queue_len ',len(queue), 'time_tot ', (time.time() - start_tot ),'time_append ',time_append,'time_scaling ',time_scaling, 'time_predict ',time_predict,'time_greedy_list ',time_greedy_list, 'time_greedy_sort ',time_greedy_sort ,'time_tresh ',time_tresh ,'time_sort ',time_sort # Python 2.x
+
+		return schedule_s
+
+	except Exception, e:
+		with open('/tmp/SLURM_PYTHON_GREEDY_ERROR.txt', 'a') as f:
+			print >> f, 'Filename:', type(e)  # Python 2.x
+			print >> f, 'Filename:', str(e)  # Python 2.x
+			print >> f, 'Filename:', type(queue)  # Python 2.x
+			print >> f, 'degradation_limit:', degradation_limit  # Python 2.x
+			print >> f, 'Filename:', type(degradation_limit)  # Python 2.x
+			#print('Filename:', str(e), file=f)  # Python 3.x
+		f.closed
 
 def colocation_pairs2(queue, degradation_limit):
 	tupla1 = queue[0]
 	tupla2 = queue[1]
  	return [[tupla1[0],tupla2[0]]]
+
+#def colocation_pairs_dio(queue, degradation_limit):
+def colocation_pairs(queue, degradation_limit):
+	try:    
+		import time    
+		start = time.time()
+		qList = sorted(queue, key=lambda tup: tup[1])
+        	sched = []
+	        for i in range(0,len(qList)/2,1):
+        	        f = len(qList)-1
+                	sched.append([qList[i][0],qList[f-i][0]])
+	        if (len(qList)%2): sched.append([qList[len(qList)/2][0]])
+		end = time.time()        
+
+		with open('/tmp/SLURM_DIO_DEBUG.txt', 'a') as f:
+			print >> f,'FINAL SCHEDULE: ', sched	
+			print >> f,'queue_len ',len(queue), 'time_tot ', (end - start) # Python 2.x
+
+		return sched
+	
+	except Exception, e:
+                with open('/tmp/SLURM_DIO_ERROR.txt', 'a') as f:
+                        print >> f, 'Filename:', type(e)  # Python 2.x
+                        print >> f, 'Filename:', str(e)  # Python 2.x
+                        print >> f, 'Filename:', type(queue)  # Python 2.x
+                        print >> f, 'degradation_limit:', degradation_limit  # Python 2.x
+                f.closed
 
 #lista = [(100,[1.19796833773087,0.238333808524628,9.23218997361478,4.91665113861468,1501199.31398417,1489795.36745549,13241816.1398417,7976065.99991967,295.997361477573,0.632031580898326,0.000262808815693145,0.000455307280223879,0.00190850490239199,0.00210457431042719]),
 #         (110,[0.572118811881188,0.00508516190513594,10,0,25448882.5188119,914046.608718328,242734893.304951,8682420.69484401,397,0,0.0034950700740341,3.15013362270567e-05,0.0333360270739527,0.000243981899186293]),

@@ -44,7 +44,8 @@
 #  define COLOCATION_INTERVAL	30
 #endif
 
-#define COLOCATION_LIMIT	4
+#define COLOCATION_LIMIT	50
+//#define COLOCATION_LIMIT	5000
 
 #define HARDWARE_COUNTER_STRING_SIZE 12056
 
@@ -262,9 +263,9 @@ static void _colocation_scheduling_static(void)
 	job_queue_rec_t *job_queue_rec;
 	PyObject *pList = NULL;
 
-	debug5("COLOCATION: %s colocation_job_list count = %d is empty = %d.",__func__,list_count(colocation_job_list),list_is_empty(colocation_job_list));
+	//debug5("COLOCATION: %s colocation_job_list count = %d is empty = %d.",__func__,list_count(colocation_job_list),list_is_empty(colocation_job_list));
 
-	debug5("COLOCATION: %s entrou first time",__func__);
+	//debug5("COLOCATION: %s entrou first time",__func__);
 	job_iterator = list_iterator_create(job_list);		
 	while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
 		if(job_ptr->job_state == JOB_RUNNING) ready++;
@@ -272,12 +273,12 @@ static void _colocation_scheduling_static(void)
 			jobs_to_colocate++;
 			if(job_ptr->priority != 0) ready++;
 			if(job_ptr->priority == 0 && ready == 0){
- 				 debug5("COLOCATION: %s jobs_to_colocate %u ready %u if sched = true",__func__,jobs_to_colocate,ready); 
+ 				 //debug5("COLOCATION: %s jobs_to_colocate %u ready %u if sched = true",__func__,jobs_to_colocate,ready); 
 				 sched = true;
 			}
 		}
 
-		debug5("COLOCATION: job_id %u priority %u share_res %d state %u state_reason %u",job_ptr->job_id,job_ptr->priority,job_ptr->details->share_res,job_ptr->job_state,job_ptr->state_reason); 
+		//debug5("COLOCATION: job_id %u priority %u share_res %d state %u state_reason %u",job_ptr->job_id,job_ptr->priority,job_ptr->details->share_res,job_ptr->job_state,job_ptr->state_reason); 
 	}
 	list_iterator_destroy(job_iterator);
 
@@ -350,7 +351,8 @@ PyObject* _create_model_input(void){
             rc = PyTuple_SetItem(pTuple, 0, pValue);
 			debug5("COLOCATION: %s _read_job_profile_file ",__func__);
 			pProfileList = _read_job_profile_file(job_ptr);
-			debug5("COLOCATION: %s job_id %u profile_list_size %d",__func__,job_ptr->job_id,PyList_GET_SIZE(pProfileList)); 
+			//debug5("COLOCATION: %s job_id %u profile_list_size %d",__func__,job_ptr->job_id,PyList_GET_SIZE(pProfileList)); 
+			debug5("COLOCATION: %s job_id %u profile_list_value %f",__func__,job_ptr->job_id,PyFloat_AsDouble(pProfileList)); 
 			PyTuple_SetItem(pTuple, 1, pProfileList);
 
 			debug5("COLOCATION: %s PyList_Append ",__func__);
@@ -408,6 +410,11 @@ PyObject* _read_job_profile_file(struct job_record *job_ptr){
 	}
 
 	fclose(fp);
+        //return cache_miss_mean
+        if(PyList_GET_SIZE(pList) > 0){
+		 debug5("COLOCATION: %s if for dio",__func__);
+		 return PyList_GetItem(pList,3);
+	}
 	return pList;
 }
 
@@ -573,6 +580,10 @@ extern void *colocation_agent(void *args)
 	last_sched_time = time(NULL);
 	while (!stop_colocation) {
 		_my_sleep(colocation_interval);
+	       if (pModule == NULL) {
+		        PyErr_Print();
+        	        debug5("Colocation: %s (while) Failed to load degradation_model!",__func__);
+	        }
 		if (stop_colocation)
 			break;
 		if (config_flag) {
