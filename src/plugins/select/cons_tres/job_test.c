@@ -284,7 +284,7 @@ if (!row) {error("ROW IS NULL"); continue; }
 			     i, row[i].num_jobs, core_str);
 			xfree(core_str);
 		}
-	}	
+	}
 #endif
 }
 
@@ -3021,6 +3021,49 @@ uint16_t _can_job_run_on_node(struct job_record *job_ptr, bitstr_t **core_map,
 	struct node_record *node_ptr = node_record_table_ptr + node_i;
 	List gres_list;
 	bitstr_t *part_core_map_ptr = NULL;
+
+	if(!test_only){
+        if(job_ptr->select_jobinfo && job_ptr->select_jobinfo->data){
+            select_job_degradation_info* jobinfo = (select_job_degradation_info*)(job_ptr->select_jobinfo->data);
+            info("COLOCATION_SELECT: text:%s", jobinfo->text);
+            if(jobinfo->incompatible_jobs){
+                bool is_unsuitable = false;
+                struct job_record *job_ptr2 = NULL;
+                //info("COLOCATION_SELECT: list size: %u", list_count(jobinfo->incompatible_jobs));
+                char listofjobs[1024];
+                char *listofjobsnext = listofjobs;
+                ListIterator it = list_iterator_create(jobinfo->incompatible_jobs);
+                int* jid;
+                while ((jid = (int*) list_next(it))/* && !is_unsuitable*/){
+                    sprintf(listofjobsnext, " %i ", *jid);
+                    listofjobsnext += strlen(listofjobsnext);
+                    if ((job_ptr2 = find_job_record(*jid))) {
+                        // this is the place we examine the job
+                        if(job_ptr2->job_state != JOB_PENDING && job_ptr2->job_state != JOB_COMPLETE && job_ptr2->node_bitmap){
+                            int i, bitmap_len;
+                            bitmap_len = bit_size(job_ptr2->node_bitmap);
+                            for (i=0; i<bitmap_len; i++) {
+                                if (!bit_test(job_ptr2->node_bitmap, i))
+                                    continue;
+                                if(node_i==i){
+                                    is_unsuitable = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                list_iterator_destroy(it);
+                info("COLOCATION_SELECT: [%i] incompatible jobs: %s", job_ptr->job_id, list_count(jobinfo->incompatible_jobs)>0?listofjobs:"[]");
+                if(is_unsuitable){
+                    info("COLOCATION_SELECT: job %i incompatible with node %i", job_ptr->job_id, node_i);
+                    cpus = 0;
+                    return cpus;
+                }
+            }
+        }
+	}
+
 
 	if (((job_ptr->bit_flags & BACKFILL_TEST) == 0) &&
 	    !test_only && IS_NODE_COMPLETING(node_ptr)) {

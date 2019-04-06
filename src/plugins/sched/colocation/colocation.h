@@ -14,6 +14,7 @@
 
 #ifndef _SLURM_COLOCATION_H
 #define _SLURM_COLOCATION_H
+#include "src/plugins/select/cons_tres/select_cons_tres.h"
 
 /* colocation_agent - detached thread periodically when pending jobs can start */
 extern void *colocation_agent(void *args);

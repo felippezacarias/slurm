@@ -56,6 +56,7 @@ static bool config_flag = false;
 static int colocation_interval = COLOCATION_INTERVAL;
 static int max_sched_job_cnt = 50;
 static int sched_timeout = 0;
+static bool toSchedule = false;
 static List colocation_job_list = (List) NULL;
 PyObject *pModule;
 PyObject *pFunc = NULL;
@@ -84,8 +85,34 @@ static void _resume_job(uint32_t job_id);
 PyObject* _read_job_profile_file(struct job_record *job_ptr);
 PyObject* _create_model_input(void);
 static void _update_job_info(PyObject *pListColocation);
+static void _update_job_graph_info(PyObject *pListColocation);
+static void _compute_colocation_graph(PyObject *pList);
 
+int _is_colocation_candidate(struct job_record *job_ptr)
+{
+	uint64_t n_cpus = job_ptr->total_cpus ?
+					   job_ptr->total_cpus :
+					   job_ptr->details->min_cpus;
+	uint64_t n_nodes = job_ptr->total_nodes ?
+					   job_ptr->total_nodes :
+					   job_ptr->details->min_nodes;
+	if(n_nodes<2 && job_ptr->job_state == JOB_PENDING && job_ptr->priority == 0 /*&& job_ptr->details->share_res==1*/ && job_ptr->hwprofile!=NULL)
+		return 1;
+	return 0;
+}
 
+int _is_colocation_consideration_candidate(struct job_record *job_ptr)
+{
+	uint64_t n_cpus = job_ptr->total_cpus ?
+					   job_ptr->total_cpus :
+					   job_ptr->details->min_cpus;
+	uint64_t n_nodes = job_ptr->total_nodes ?
+					   job_ptr->total_nodes :
+					   job_ptr->details->min_nodes;
+	if(n_nodes<2 && (job_ptr->job_state == JOB_PENDING || job_ptr->job_state == JOB_RUNNING) /*&& job_ptr->details->share_res==1*/ && job_ptr->hwprofile!=NULL)
+		return 1;
+	return 0;
+}
 
 /* Terminate colocation_agent */
 extern void stop_colocation_agent(void)
@@ -261,56 +288,71 @@ static void _colocation_scheduling_static(void)
 	ListIterator job_iterator;
 	job_queue_rec_t *job_queue_rec;
 	PyObject *pList = NULL;
+	info("COLOCATION: scheduling run");
 
 	debug5("COLOCATION: %s colocation_job_list count = %d is empty = %d.",__func__,list_count(colocation_job_list),list_is_empty(colocation_job_list));
 
 	debug5("COLOCATION: %s entrou first time",__func__);
-	job_iterator = list_iterator_create(job_list);		
+	job_iterator = list_iterator_create(job_list);
 	while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
-		if(job_ptr->job_state == JOB_RUNNING) ready++;
-		if(job_ptr->job_state == JOB_PENDING){
+		//if(job_ptr->job_state == JOB_RUNNING) ready++;
+		if(_is_colocation_candidate(job_ptr)){
+            info("COLOCATION: candidate job %d", job_ptr->job_id);
+		//if(job_ptr->job_state == JOB_PENDING){
 			jobs_to_colocate++;
-			if(job_ptr->priority != 0) ready++;
-			if(job_ptr->priority == 0 && ready == 0){
- 				 debug5("COLOCATION: %s jobs_to_colocate %u ready %u if sched = true",__func__,jobs_to_colocate,ready); 
-				 sched = true;
-			}
+			//if(job_ptr->priority != 0) ready++;
+			//if(job_ptr->priority == 0 && ready == 0){
+ 				 debug5("COLOCATION: %s jobs_to_colocate %u ready %u if sched = true",__func__,jobs_to_colocate,ready);
+				 //sched = true;
+			//}
 		}
 
-		debug5("COLOCATION: job_id %u priority %u share_res %d state %u state_reason %u",job_ptr->job_id,job_ptr->priority,job_ptr->details->share_res,job_ptr->job_state,job_ptr->state_reason); 
+		debug5("COLOCATION: job_id %u priority %u share_res %d state %u state_reason %u",job_ptr->job_id,job_ptr->priority,job_ptr->details->share_res,job_ptr->job_state,job_ptr->state_reason);
 	}
 	list_iterator_destroy(job_iterator);
 
-	debug5("COLOCATION: %s jobs_to_colocate %u ready %u",__func__,jobs_to_colocate,ready); 
+	debug5("COLOCATION: %s jobs_to_colocate %u ready %u",__func__,jobs_to_colocate,ready);
 
     if (jobs_to_colocate == 0) priority = NO_VAL - 1;
 
-	if((jobs_to_colocate >= 1) && sched){
+	if((jobs_to_colocate >= 1)/* && sched*/){
 		if (jobs_to_colocate % 2 == 0){
+            info("COLOCATION: creating model input for %d jobs", jobs_to_colocate);
 			pList = _create_model_input();
 			debug5("COLOCATION: function %s Model list input size %d",__func__,PyList_GET_SIZE(pList));
-			sched = false;
+			//sched = false;
 		}
 		else{
-			job_iterator = list_iterator_create(job_list);		
+            info("COLOCATION: letting one job continue");
+			job_iterator = list_iterator_create(job_list);
 			while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
-				if(job_ptr->job_state == JOB_PENDING && job_ptr->priority == 0){
+				if(_is_colocation_candidate(job_ptr)){
+                    if(!job_ptr->select_jobinfo || !job_ptr->select_jobinfo->data)
+                        job_ptr->select_jobinfo = select_g_select_jobinfo_alloc();
+                    ((select_job_degradation_info*)(job_ptr->select_jobinfo->data))->text = xstrdup("allowed job");
+
 					job_ptr->priority = priority;
 					priority--;
-					sched = true;
+					toSchedule = true;
+					//sched = true;
 					break;
 				}
-				debug5("COLOCATION: job_id %u priority %u share_res %d state_reason %u",job_ptr->job_id,job_ptr->priority,job_ptr->details->share_res,job_ptr->state_reason); 
+				debug5("COLOCATION: job_id %u priority %u share_res %d state_reason %u",job_ptr->job_id,job_ptr->priority,job_ptr->details->share_res,job_ptr->state_reason);
 			}
 			list_iterator_destroy(job_iterator);
 		}
 	}
-	
+
 	if(pList != NULL){
 		//Create degradation graph and compute colocation pairs
-		_compute_colocation_pairs(pList);
+		info("COLOCATION: creating colocation pairs for %d jobs", PyList_GET_SIZE(pList));
+		_compute_colocation_graph(pList);
 		debug5("COLOCATION: %s After _compute_colocation_pairs!",__func__);
 		Py_XDECREF(pList);
+	}
+	if(toSchedule){
+        toSchedule = false;
+        //schedule(0);
 	}
 }
 
@@ -337,10 +379,10 @@ PyObject* _create_model_input(void){
 	while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
 		debug5("COLOCATION: %s Job_id %u  job_state %u job_coaloc %u",__func__,job_ptr->job_id,job_ptr->job_state,job_coaloc);
 		if(job_coaloc == COLOCATION_LIMIT) break;
-		if(job_ptr->job_state == JOB_PENDING){
+		if(_is_colocation_consideration_candidate(job_ptr)/*->job_state == JOB_PENDING*/){
 			job_coaloc++;
 			//holding job to prevent scheduling while computing colocation
-			job_ptr->priority = 0;
+			//job_ptr->priority = 0;
 			pTuple = PyTuple_New(2);
 			//Adding info to de model as [(job_id,[perf_counters]),...]
 			job_id = job_ptr->job_id * 1.0f;
@@ -421,7 +463,7 @@ static void _update_job_info(PyObject *pListColocation){
 	debug5("colocation: %s initiated.",__func__);
 
 	ngroups = PyList_GET_SIZE(pListColocation);
-	debug5("colocation: %s ngroups = %d.",__func__,ngroups);
+	info("COLOCATION: %s ngroups = %d.",__func__,ngroups);
 	for(i = 0; i < ngroups; i++ ){
 		pValue = PyList_GetItem(pListColocation,i);
 		colocation = PyList_GET_SIZE(pValue);
@@ -429,41 +471,54 @@ static void _update_job_info(PyObject *pListColocation){
 
 			job_id = (uint32_t) PyFloat_AsDouble(PyList_GetItem(pValue,0));
 			if ((job_ptr = find_job_record(job_id)) == NULL) {
-				debug5("colocation: %s could not find job %u",__func__,job_id);
+				info("COLOCATION: %s could not find job %u",__func__,job_id);
 			}
+
+			if(!job_ptr->select_jobinfo || !job_ptr->select_jobinfo->data)
+                job_ptr->select_jobinfo = select_g_select_jobinfo_alloc();
+            ((select_job_degradation_info*)(job_ptr->select_jobinfo->data))->text = xstrdup("1st job");
 
 			job_id = (uint32_t) PyFloat_AsDouble(PyList_GetItem(pValue,1));
 			if ((job_ptr_sec = find_job_record(job_id)) == NULL) {
-				debug5("colocation: %s could not find job %u",__func__,job_id);
+				info("COLOCATION: %s could not find job %u",__func__,job_id);
 			}
 
-			debug5("colocation: %s Jobs to share node jobid1 = %u jobid2 = %u priority = %u.",__func__,job_ptr->job_id,job_ptr_sec->job_id,priority);
+			if(!job_ptr_sec->select_jobinfo || !job_ptr->select_jobinfo->data)
+                job_ptr_sec->select_jobinfo = select_g_select_jobinfo_alloc();
+            ((select_job_degradation_info*)(job_ptr_sec->select_jobinfo->data))->text = xstrdup("2nd job");
+
+			info("COLOCATION: %s Jobs to share node jobid1 = %u jobid2 = %u priority = %u.",__func__,job_ptr->job_id,job_ptr_sec->job_id,priority);
 
 			job_ptr->details->share_res = 1;
 			job_ptr_sec->details->share_res = 1;
 			job_ptr_sec->priority = priority;
-			job_ptr->priority = priority; 
+			job_ptr->priority = priority;
 			priority--;
-			
+
 		}
 		else{
 
 			job_id = (uint32_t) PyFloat_AsDouble(PyList_GetItem(pValue,0));
 			if ((job_ptr = find_job_record(job_id)) == NULL) {
-				debug5("colocation: %s could not find job %u",__func__,job_id);
+				info("COLOCATION: %s could not find job %u",__func__,job_id);
 			}
 
+			if(!job_ptr->select_jobinfo || !job_ptr->select_jobinfo->data)
+                job_ptr->select_jobinfo = select_g_select_jobinfo_alloc();
+            ((select_job_degradation_info*)(job_ptr->select_jobinfo->data))->text = xstrdup("lone job");
+
+            info("COLOCATION: %s Jobs to execute alone jobid = %u priority %u.",__func__,job_ptr->job_id,priority);
 			job_ptr->details->share_res = 0;
-			job_ptr->priority = priority; 
+			job_ptr->priority = priority;
 			priority--;
-			debug5("colocation: %s Jobs to execute alone jobid = %u priority %u.",__func__,job_ptr->job_id,priority);
 		}
+		toSchedule = true;
 	}
 }
 
 static void _compute_colocation_pairs(PyObject *pList){
 	//PyObject *pName, *pModule, *pFunc;
-	
+
     PyObject *pArgs, *pValue, *pValue2;
 	//TODO: This limit can be passed through config variables
     double degradation_limit = 100.0;
@@ -528,12 +583,144 @@ static void _compute_colocation_pairs(PyObject *pList){
             if (PyErr_Occurred())
                 PyErr_Print();
 			debug5("Colocation: %s Cannot find function colocation_pairs!",__func__);
-			//pFunc = NULL;           
+			//pFunc = NULL;
         }
         //Py_XDECREF(pFunc);
     }
 
 }
+
+//--------------------------------------------------------------------------------
+
+static void _compute_colocation_graph(PyObject *pList){
+	//PyObject *pName, *pModule, *pFunc;
+
+    PyObject *pArgs, *pValue, *pValue2;
+	//TODO: This limit can be passed through config variables
+    double degradation_limit = 100.0;
+
+	debug5("Colocation: %s Initiated input size %d.",__func__,PyList_GET_SIZE(pList) );
+
+    if (pModule != NULL) {
+        if(pFunc == NULL) pFunc = PyObject_GetAttrString(pModule, "colocation_graph");
+        /* pFunc is a new reference */
+
+        if (pFunc && PyCallable_Check(pFunc)) {
+            pArgs = PyTuple_New(2);
+			//Setting hardware counters list
+			PyTuple_SetItem(pArgs, 0, pList);
+
+			debug5("Colocation: %s pList size %d.",__func__,PyList_GET_SIZE(pList) );
+			pValue2 = PyList_GetItem(pList,0);
+			debug5("Colocation[0]: %s is tuple %d.",__func__,PyTuple_Check(pValue2));
+			debug5("Colocation[0]: %s tuple value_1 %f tuple list size %d",__func__,PyFloat_AsDouble(PyTuple_GetItem(pValue2,0)),PyList_GET_SIZE(PyTuple_GetItem(pValue2,1)));
+
+			pValue2 = PyList_GetItem(pList,1);
+			debug5("Colocation[1]: %s is tuple %d.",__func__,PyTuple_Check(pValue2));
+			debug5("Colocation[1]: %s tuple value_1 %f tuple list size %d",__func__,PyFloat_AsDouble(PyTuple_GetItem(pValue2,0)),PyList_GET_SIZE(PyTuple_GetItem(pValue2,1)));
+
+
+			//Setting degradation limit to colocate jobs
+			PyTuple_SetItem(pArgs, 1, PyFloat_FromDouble(degradation_limit));
+
+
+			debug5("COLOCATION: function %s calling PyObject_CallObject",__func__);
+			pValue = PyObject_CallObject(pFunc, pArgs);
+            if (pValue != NULL) {
+				if (pValue == Py_None){
+					debug5("Colocation: %s after PyObject_CallObject result is [%s]",__func__,PyString_AsString(PyObject_Str(pValue)));
+					return;
+				}
+				info("Colocation: %s after PyObject_CallObject value is_list %d value size %d type_res %s",__func__,PyList_Check(pValue),PyList_GET_SIZE(pValue),PyString_AsString(PyObject_Str(pValue)));
+				//pValue2 = PyList_GetItem(pValue,0);
+				//debug5("Colocation: %s Result of call: %f",__func__,PyFloat_AsDouble(PyList_GetItem(pValue2,0)));
+				//debug5("Colocation: %s Result of call: %f",__func__,PyFloat_AsDouble(PyList_GetItem(pValue2,1)));
+				_update_job_graph_info(pValue);
+
+
+				//pArgs = PyList_GetItem(pValue,0);
+				//pValue2 = PyList_GetItem(pValue,1);
+				//debug5("COLOCATION: function %s Tupla[1] = %f size [2] = %d ",__func__,PyFloat_AsDouble(PyTuple_GetItem(pValue,0)),PyList_GET_SIZE(PyTuple_GetItem(pValue,1)));
+				Py_DECREF(pArgs);
+                Py_DECREF(pValue);
+				Py_XDECREF(pList);
+				Py_XDECREF(pValue2);
+            }
+            else {
+                //Py_DECREF(pFunc);
+				//pFunc = NULL;
+                //Py_DECREF(pModule);
+                PyErr_Print();
+				PyErr_Clear();
+				debug5("Colocation: %s Call failed!",__func__);
+            }
+        }
+        else {
+            if (PyErr_Occurred())
+                PyErr_Print();
+			debug5("Colocation: %s Cannot find function colocation_pairs!",__func__);
+			//pFunc = NULL;
+        }
+        //Py_XDECREF(pFunc);
+    }
+
+}
+
+static void _update_job_graph_info(PyObject *pListColocation){
+    PyObject *pList, *pList2, *pValue;
+	int i, j, ngroups, colocation, rc = 0, listlen;
+	uint32_t job_id, job_id2;
+	struct job_record *job_ptr = NULL;
+	struct job_record *job_ptr_sec = NULL;
+
+	debug5("colocation: %s initiated.",__func__);
+
+	ngroups = PyList_GET_SIZE(pListColocation);
+	info("COLOCATION: %s ngroups = %d.",__func__,ngroups);
+	for(i = 0; i < ngroups; i++ ){
+		pList = PyList_GetItem(pListColocation,i);
+		colocation = PyList_GET_SIZE(pList);
+		if(colocation > 1){
+
+			job_id = (uint32_t) PyFloat_AsDouble(PyList_GetItem(pList,0));
+			if ((job_ptr = find_job_record(job_id)) == NULL) {
+				info("COLOCATION: %s could not find job %u",__func__,job_id);
+			}
+
+			List jlist = list_create(NULL);
+			pList2 = PyList_GetItem(pList,1);
+			listlen = PyList_GET_SIZE(pList2);
+			for(j=0; j<listlen; j++){
+                pValue = PyList_GetItem(pList2,j);
+                job_id2 = (uint32_t) PyFloat_AsDouble(pValue);
+                int* jid = xmalloc(sizeof(int));
+                *jid = job_id2;
+                list_append(jlist, jid);
+			}
+			if(!job_ptr->select_jobinfo || !job_ptr->select_jobinfo->data)
+                job_ptr->select_jobinfo = select_g_select_jobinfo_alloc();
+            ((select_job_degradation_info*)(job_ptr->select_jobinfo->data))->text = xstrdup("1st job");
+			((select_job_degradation_info*)(job_ptr->select_jobinfo->data))->incompatible_jobs = jlist;
+
+			job_ptr->details->share_res = 1;
+			job_ptr->priority = priority;
+			priority--;
+
+		}
+		else{
+
+			job_id = (uint32_t) PyFloat_AsDouble(PyList_GetItem(pValue,0));
+			if ((job_ptr = find_job_record(job_id)) == NULL) {
+				info("COLOCATION: %s could not find job %u",__func__,job_id);
+			}
+
+			error("COLOCATION: %s no info for job %u",__func__,job_id);
+		}
+		toSchedule = true;
+	}
+}
+
+//--------------------------------------------------------------------------------
 
 /* Note that slurm.conf has changed */
 extern void colocation_reconfig(void)
@@ -561,13 +748,22 @@ extern void *colocation_agent(void *args)
 	colocation_job_list = list_create(NULL);
 
 	Py_Initialize();
-    pName = PyString_FromString("degradation_model"); 
+    pName = PyString_FromString("degradation_model");
 
 	pModule = PyImport_Import(pName);
     Py_DECREF(pName);
     if (pModule == NULL) {
+		PyObject *ptype, *pvalue, *ptraceback;
+		PyErr_Fetch(&ptype, &pvalue, &ptraceback);
+		//pvalue contains error message
+		//ptraceback contains stack snapshot and many other information
+		//(see python traceback structure)
+
+		//Get error message
+		char *pStrErrorMessage = PyString_AsString(pvalue);
         PyErr_Print();
 		debug5("Colocation: %s Failed to load degradation_model!",__func__);
+		debug5("Colocation error: %s",pStrErrorMessage);
 	}
 
 	last_sched_time = time(NULL);

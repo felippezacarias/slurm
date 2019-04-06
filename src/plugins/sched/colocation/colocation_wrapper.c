@@ -69,9 +69,26 @@ int slurm_sched_p_reconfig(void)
 	return SLURM_SUCCESS;
 }
 
+int _is_initial_colocation_candidate(struct job_record *job_ptr)
+{
+	uint64_t n_cpus = job_ptr->total_cpus ?
+					   job_ptr->total_cpus :
+					   job_ptr->details->min_cpus;
+	uint64_t n_nodes = job_ptr->total_nodes ?
+					   job_ptr->total_nodes :
+					   job_ptr->details->min_nodes;
+	if(n_nodes<2 /*&& job_ptr->details->share_res==1*/ && job_ptr->hwprofile!=NULL)
+		return 1;
+	return 0;
+}
+
 uint32_t slurm_sched_p_initial_priority(uint32_t last_prio,
 					struct job_record *job_ptr)
 {
-	//return priority_g_set(last_prio, job_ptr);
-	return 0; /* hold all new */
+    if(_is_initial_colocation_candidate(job_ptr))
+		return 0; /* hold all new with 1 task */
+    if(!job_ptr->select_jobinfo || !job_ptr->select_jobinfo->data)
+        job_ptr->select_jobinfo = select_g_select_jobinfo_alloc();
+    ((select_job_degradation_info*)(job_ptr->select_jobinfo->data))->text = xstrdup("lone job");
+	return priority_g_set(last_prio, job_ptr);
 }

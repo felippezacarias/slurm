@@ -109,6 +109,14 @@ struct part_res_record {
 	struct part_row_data *row;	/* array of rows containing jobs */
 };
 
+typedef struct select_job_degratation_info_t{
+    uint16_t magic;
+    char *text;
+    List incompatible_jobs;
+    int32_t jobid;
+}select_job_degradation_info;
+
+
 /* Global variables */
 extern bool	backfill_busy_nodes;
 extern int	bf_window_scale;

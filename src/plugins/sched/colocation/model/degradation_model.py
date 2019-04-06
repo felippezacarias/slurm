@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 #Predicting the degradation through ML
 #using the blossom algorithm
+import traceback
 def colocation_pairs_optimal(queue, degradation_limit):
 
 	try:
@@ -10,7 +11,7 @@ def colocation_pairs_optimal(queue, degradation_limit):
 
 		#Depois colocar esse "/opt/slurm/lib/degradation_model/" pra 
 		#ser pego da variável de ambiente
-		sys.path.insert(0, '/opt/slurm/lib/degradation_model/graph/')
+		sys.path.insert(0, '/home/slurm/src/plugins/sched/colocation/model/graph/')
 		#Arquivo apenas necessário para propósitos de debug
 		#with open('/tmp/PYTHON_PATH.txt', 'a') as f:
 		#	print >> f, 'Filename:', sys.path  # Python 2.x
@@ -32,9 +33,9 @@ def colocation_pairs_optimal(queue, degradation_limit):
 
 		#Load machine learning model
 		#loaded_model = pickle.load(open("linear_regression.sav", 'rb'))
-		loaded_model = pickle.load(open("/opt/slurm/lib/degradation_model/mlpregressor.sav", 'rb'))
+		loaded_model = pickle.load(open("/home/slurm/src/plugins/sched/colocation/model/mlpregressor.sav", 'rb'))
 		#Load scaling used on training fase
-		scaling_model = pickle.load(open("/opt/slurm/lib/degradation_model/scaling.sav", 'rb'))
+		scaling_model = pickle.load(open("/home/slurm/src/plugins/sched/colocation/model/scaling.sav", 'rb'))
 
 		#For each job create degradation graph
 		for jobMain in joblist:
@@ -80,11 +81,15 @@ def colocation_pairs_optimal(queue, degradation_limit):
 		return schedule_s
 
 	except Exception, e:
+		import sys, os
+		exc_type, exc_obj, exc_tb = sys.exc_info()
 		with open('/tmp/SLURM_PYTHON_ERROR.txt', 'a') as f:
+			print >> f, traceback.format_exc()
 			print >> f, 'Filename:', type(e)  # Python 2.x
 			print >> f, 'Filename:', str(e)  # Python 2.x
 			print >> f, 'queue:', queue  # Python 2.x
 			print >> f, 'Filename:', type(queue)  # Python 2.x
+			print >> f, 'Line number:', exc_tb.tb_lineno  # Python 2.x
 			for job in queue:
 				print >> f, 'type job[0]',type(job[0])
 				print >> f, 'type job[1]',type(job[1])				
@@ -104,7 +109,7 @@ def colocation_pairs(queue, degradation_limit):
 
 		#Depois colocar esse "/opt/slurm/lib/degradation_model/" pra 
 		#ser pego da variável de ambiente
-		sys.path.insert(0, '/opt/slurm/lib/degradation_model/graph/')
+		sys.path.insert(0, '/home/slurm/src/plugins/sched/colocation/model/graph/')
 		#Arquivo apenas necessário para propósitos de debug
 		#with open('/tmp/PYTHON_PATH.txt', 'a') as f:
 		#	print >> f, 'Filename:', sys.path  # Python 2.x
@@ -126,9 +131,9 @@ def colocation_pairs(queue, degradation_limit):
 
 		#Load machine learning model
 		#loaded_model = pickle.load(open("linear_regression.sav", 'rb'))
-		loaded_model = pickle.load(open("/opt/slurm/lib/degradation_model/mlpregressor.sav", 'rb'))
+		loaded_model = pickle.load(open("/home/slurm/src/plugins/sched/colocation/model/mlpregressor.sav", 'rb'))
 		#Load scaling used on training fase
-		scaling_model = pickle.load(open("/opt/slurm/lib/degradation_model/scaling.sav", 'rb'))
+		scaling_model = pickle.load(open("/home/slurm/src/plugins/sched/colocation/model/scaling.sav", 'rb'))
 
 		for it in range(0,len(queue),1):
 			for j in range(it+1,len(queue),1):
@@ -169,15 +174,110 @@ def colocation_pairs(queue, degradation_limit):
 		return schedule_s
 
 	except Exception, e:
+		import sys, os
+		exc_type, exc_obj, exc_tb = sys.exc_info()
 		with open('/tmp/SLURM_PYTHON_GREEDY_ERROR.txt', 'a') as f:
+			print >> f, traceback.format_exc()
 			print >> f, 'Filename:', type(e)  # Python 2.x
 			print >> f, 'Filename:', str(e)  # Python 2.x
 			print >> f, 'Filename:', type(queue)  # Python 2.x
+			print >> f, 'Line number:', exc_tb.tb_lineno  # Python 2.x
 			print >> f, 'degradation_limit:', degradation_limit  # Python 2.x
 			print >> f, 'Filename:', type(degradation_limit)  # Python 2.x
 			#print('Filename:', str(e), file=f)  # Python 3.x
 		f.closed
 
+#Graph approach
+def colocation_graph(queue, degradation_limit):
+
+	try:
+		import sys
+			
+		import pickle
+
+		#Depois colocar esse "/opt/slurm/lib/degradation_model/" pra 
+		#ser pego da variável de ambiente
+		sys.path.insert(0, '/home/slurm/src/plugins/sched/colocation/model/graph/')
+		#Arquivo apenas necessário para propósitos de debug
+		#with open('/tmp/PYTHON_PATH.txt', 'a') as f:
+		#	print >> f, 'Filename:', sys.path  # Python 2.x
+
+
+		schedule = []
+		apps_counters = {}
+		joblist = []
+		list_jobid = []
+		schedule_s = []
+		jobs_dict = {}
+
+
+		#creating dictionary for building degradation graph
+		for job in queue:
+			jobid = job[0]
+			apps_counters[jobid] = job[1]
+			joblist.append(jobid)
+			if jobid not in jobs_dict:
+				jobs_dict[jobid] = set()
+
+		#Load machine learning model
+		#loaded_model = pickle.load(open("linear_regression.sav", 'rb'))
+		loaded_model = pickle.load(open("/home/slurm/src/plugins/sched/colocation/model/mlpregressor.sav", 'rb'))
+		#Load scaling used on training fase
+		scaling_model = pickle.load(open("/home/slurm/src/plugins/sched/colocation/model/scaling.sav", 'rb'))
+
+        
+		for it in range(0,len(queue),1):
+			for j in range(it+1,len(queue),1):
+				#print("job1 = {r1} job2 = {r2}".format(r1=joblist[it],r2=joblist[j]))
+				try:
+					prediction = apps_counters[joblist[it]] + apps_counters[joblist[j]]
+					prediction_normalized = scaling_model.transform([prediction])
+
+					degradationMain = loaded_model.predict(prediction_normalized)
+					prediction = apps_counters[joblist[j]] + apps_counters[joblist[it]]
+					prediction_normalized = scaling_model.transform([prediction])
+					degradationSecond = loaded_model.predict(prediction_normalized)
+						
+					if max(degradationMain[0], degradationSecond[0]) > degradation_limit:
+						if joblist[j] not in jobs_dict[joblist[it]]:
+							jobs_dict[joblist[it]].add(joblist[j])
+						if joblist[it] not in jobs_dict[joblist[j]]:
+							jobs_dict[joblist[j]].add(joblist[it])
+				except Exception, e:
+					pass
+
+		final_list = []
+		for job in jobs_dict.keys():
+			l = []
+			for j in jobs_dict[job]:
+				l.append(j)
+			final_list.append([job, l])
+		
+
+		with open('/tmp/SLURM_PYTHON_GRAPH_DEBUG.txt', 'a') as f:
+			print >> f, 'EXECUTION:'  # Python 2.x
+			print >> f, 'FORBIDDEN COMBINATIONS'
+			for job in jobs_dict.keys():
+				print >> f, "Job ", job, "[",
+				for j in jobs_dict[job]:
+					print >> f, j,
+				print >> f, "]"
+
+		return final_list
+
+	except Exception, e:
+		import sys, os
+		exc_type, exc_obj, exc_tb = sys.exc_info()
+		with open('/tmp/SLURM_PYTHON_GRAPH_ERROR.txt', 'a') as f:
+			print >> f, traceback.format_exc()
+			print >> f, 'Filename:', type(e)  # Python 2.x
+			print >> f, 'Filename:', str(e)  # Python 2.x
+			print >> f, 'Filename:', type(queue)  # Python 2.x
+			print >> f, 'Line number:', exc_tb.tb_lineno  # Python 2.x
+			print >> f, 'degradation_limit:', degradation_limit  # Python 2.x
+			print >> f, 'Filename:', type(degradation_limit)  # Python 2.x
+			#print('Filename:', str(e), file=f)  # Python 3.x
+		f.closed
 
 
 def colocation_pairs2(queue, degradation_limit):
