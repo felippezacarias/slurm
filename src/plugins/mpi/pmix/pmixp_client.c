@@ -94,7 +94,7 @@
 	PMIX_VAL_SET(value, int, rank);				\
 }
 
-#elif (HAVE_PMIX_VER == 2)
+#else
 #define PMIXP_INFO_ARRAY_CREATE(kvp, _array, _count)			\
 {									\
 	(kvp)->value.type = PMIX_DATA_ARRAY;				\
@@ -707,4 +707,43 @@ extern int pmixp_libpmix_job_set(void)
 	xfree(register_caddy);
 
 	return ret;
+}
+
+extern int pmixp_lib_fence(const pmixp_proc_t procs[], size_t nprocs,
+			   bool collect, char *data, size_t ndata,
+			   void *cbfunc, void *cbdata)
+{
+	pmixp_coll_t *coll;
+	pmix_status_t status;
+	pmix_modex_cbfunc_t modex_cbfunc = (pmix_modex_cbfunc_t)cbfunc;
+	int ret;
+
+	/* Chooses the coll algorithm defined by user
+	 * thru the env variable: SLURM_PMIXP_FENCE.
+	 * By default: PMIXP_COLL_TYPE_FENCE_AUTO
+	 * is used the both fence algorithms */
+	pmixp_coll_type_t type = pmixp_info_srv_fence_coll_type();
+
+	if (PMIXP_COLL_TYPE_FENCE_MAX == type) {
+		type = PMIXP_COLL_TYPE_FENCE_TREE;
+		if (collect) {
+			type = PMIXP_COLL_TYPE_FENCE_RING;
+		}
+	}
+
+	coll = pmixp_state_coll_get(type, procs, nprocs);
+	if (!coll) {
+		status = PMIX_ERROR;
+		goto error;
+	}
+	ret = pmixp_coll_contrib_local(coll, type, data, ndata, cbfunc, cbdata);
+	if (SLURM_SUCCESS != ret) {
+		status = PMIX_ERROR;
+		goto error;
+	}
+	return SLURM_SUCCESS;
+
+error:
+	modex_cbfunc(status, NULL, 0, cbdata, NULL, NULL);
+	return SLURM_ERROR;
 }

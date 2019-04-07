@@ -71,6 +71,7 @@ static void _aggregate_tres_usage_stats_internal(char **dest_tres_max,
 		if (!(dest_tres_rec = list_find_first(dest_tres_list,
 						      slurmdb_find_tres_in_list,
 						      &from_tres_rec->id))) {
+			list_remove(itr);
 			list_append(dest_tres_list, from_tres_rec);
 		} else {
 			if (dest_tres_rec->count == INFINITE64 ||
@@ -90,6 +91,8 @@ static void _aggregate_tres_usage_stats_internal(char **dest_tres_max,
 			}
 		}
 	}
+	list_iterator_destroy(itr);
+
 	/* make the string now from the list */
 	flags = TRES_STR_FLAG_SIMPLE + TRES_STR_FLAG_REMOVE;
 	xfree(*dest_tres_max);
@@ -105,6 +108,7 @@ static void _aggregate_tres_usage_stats_internal(char **dest_tres_max,
 
 	/* Now process the taskid */
 	xfree(*dest_tres_max_taskid);
+	list_iterator_reset(itr);
 	while ((dest_tres_rec = list_next(itr)))
 		dest_tres_rec->count = dest_tres_rec->alloc_secs;
 	*dest_tres_max_taskid = slurmdb_make_tres_string(dest_tres_list, flags);

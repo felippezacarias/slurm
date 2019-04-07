@@ -1215,7 +1215,7 @@ extern void create_srun_job(void **p_job, bool *got_alloc,
 		xfree(pack_nodelist);
 	} else {
 		/* Combined job allocation and job step launch */
-#if defined HAVE_FRONT_END && (!defined HAVE_BG || !defined HAVE_BG_FILES) && (!defined HAVE_REAL_CRAY)
+#if defined HAVE_FRONT_END && (!defined HAVE_REAL_CRAY)
 		uid_t my_uid = getuid();
 		if ((my_uid != 0) &&
 		    (my_uid != slurm_get_slurm_user_id())) {
@@ -1345,6 +1345,8 @@ extern void pre_launch_srun_job(srun_job_t *job, bool slurm_started,
 		slurm_step_launch_abort(job->step_ctx);
 		exit(error_exit);
 	}
+
+	env_array_merge(&job->env, (const char **)__environ);
 }
 
 extern void fini_srun(srun_job_t *job, bool got_alloc, uint32_t *global_rc,
@@ -1464,10 +1466,6 @@ static srun_job_t *_job_create_structure(allocation_info_t *ainfo,
 {
 	srun_job_t *job = xmalloc(sizeof(srun_job_t));
 	int i;
-#if defined HAVE_BG
-	srun_opt_t *srun_opt = opt_local->srun_opt;
-	xassert(srun_opt);
-#endif
 
 	_set_ntasks(ainfo, opt_local);
 	debug2("creating job with %d tasks", opt_local->ntasks);
@@ -1486,58 +1484,7 @@ static srun_job_t *_job_create_structure(allocation_info_t *ainfo,
  	job->pack_offset = NO_VAL;
 	job->pack_task_offset = NO_VAL;
 
-#if defined HAVE_BG
-//#if defined HAVE_BGQ && defined HAVE_BG_FILES
-	/* Since the allocation will have the correct cnode count get
-	   it if it is available.  Else grab it from opt_local->min_nodes
-	   (meaning the allocation happened before).
-	*/
-	if (ainfo->select_jobinfo) {
-		select_g_select_jobinfo_get(ainfo->select_jobinfo,
-					    SELECT_JOBDATA_NODE_CNT,
-					    &job->nhosts);
-	} else
-		job->nhosts   = opt_local->min_nodes;
-	/* If we didn't ask for nodes set it up correctly here so the
-	   step allocation does the correct thing.
-	*/
-	if (!opt_local->nodes_set) {
-		opt_local->min_nodes = opt_local->max_nodes = job->nhosts;
-		opt_local->nodes_set = true;
-		opt_local->ntasks_per_node = NO_VAL;
-		bg_figure_nodes_tasks(&opt_local->min_nodes,
-				      &opt_local->max_nodes,
-				      &opt_local->ntasks_per_node,
-				      &opt_local->ntasks_set,
-				      &opt_local->ntasks, opt_local->nodes_set,
-				      srun_opt->nodes_set_opt,
-				      opt_local->overcommit, 1);
-
-#if defined HAVE_BG_FILES
-		/* Replace the runjob line with correct information. */
-		int i, matches = 0;
-		for (i = 0; i < srun_opt->argc; i++) {
-			if (!xstrcmp(srun_opt->argv[i], "-p")) {
-				i++;
-				xfree(srun_opt->argv[i]);
-				srun_opt->argv[i]  = xstrdup_printf(
-					"%d", opt_local->ntasks_per_node);
-				matches++;
-			} else if (!xstrcmp(srun_opt->argv[i], "--np")) {
-				i++;
-				xfree(srun_opt->argv[i]);
-				srun_opt->argv[i]  = xstrdup_printf(
-					"%d", opt_local->ntasks);
-				matches++;
-			}
-			if (matches == 2)
-				break;
-		}
-		xassert(matches == 2);
-#endif
-	}
-
-#elif defined HAVE_FRONT_END && !defined HAVE_ALPS_CRAY
+#if defined HAVE_FRONT_END && !defined HAVE_ALPS_CRAY
 	/* Limited job step support */
 	opt_local->overcommit = true;
 	job->nhosts = 1;
@@ -1545,8 +1492,7 @@ static srun_job_t *_job_create_structure(allocation_info_t *ainfo,
 	job->nhosts   = ainfo->nnodes;
 #endif
 
-#if !defined HAVE_FRONT_END || (defined HAVE_BGQ)
-//#if !defined HAVE_FRONT_END || (defined HAVE_BGQ && defined HAVE_BG_FILES)
+#if !defined HAVE_FRONT_END
 	if (opt_local->min_nodes > job->nhosts) {
 		error("Only allocated %d nodes asked for %d",
 		      job->nhosts, opt_local->min_nodes);
@@ -1904,7 +1850,7 @@ static void _set_env_vars2(resource_allocation_response_msg_t *resp,
 	if (resp->account) {
 		key = _build_key("SLURM_JOB_ACCOUNT", pack_offset);
 		if (!getenv(key) &&
-		    (setenvf(NULL, key, "%u", resp->account) < 0)) {
+		    (setenvf(NULL, key, "%s", resp->account) < 0)) {
 			error("unable to set %s in environment", key);
 		}
 		xfree(key);
@@ -1934,7 +1880,7 @@ static void _set_env_vars2(resource_allocation_response_msg_t *resp,
 	if (resp->qos) {
 		key = _build_key("SLURM_JOB_QOS", pack_offset);
 		if (!getenv(key) &&
-		    (setenvf(NULL, key, "%u", resp->qos) < 0)) {
+		    (setenvf(NULL, key, "%s", resp->qos) < 0)) {
 			error("unable to set %s in environment", key);
 		}
 		xfree(key);
@@ -1943,7 +1889,7 @@ static void _set_env_vars2(resource_allocation_response_msg_t *resp,
 	if (resp->resv_name) {
 		key = _build_key("SLURM_JOB_RESERVATION", pack_offset);
 		if (!getenv(key) &&
-		    (setenvf(NULL, key, "%u", resp->resv_name) < 0)) {
+		    (setenvf(NULL, key, "%s", resp->resv_name) < 0)) {
 			error("unable to set %s in environment", key);
 		}
 		xfree(key);
@@ -1952,7 +1898,7 @@ static void _set_env_vars2(resource_allocation_response_msg_t *resp,
 	if (resp->alias_list) {
 		key = _build_key("SLURM_NODE_ALIASES", pack_offset);
 		if (!getenv(key) &&
-		    (setenvf(NULL, key, "%u", resp->alias_list) < 0)) {
+		    (setenvf(NULL, key, "%s", resp->alias_list) < 0)) {
 			error("unable to set %s in environment", key);
 		}
 		xfree(key);

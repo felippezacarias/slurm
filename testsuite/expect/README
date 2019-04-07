@@ -353,7 +353,7 @@ test7.4    Test of TotalView operation with srun, with and without bulk
 test7.5    Test of TotalView termination logic for srun.
 test7.6    Test of TotalView operation with sattach
 test7.7    (removed)
-test7.8    Test configuration file test logic ("slurmctld -t").
+test7.8    (removed)
 test7.9    Test that no files are open in spawned tasks (except stdin,
 	   stdout, and stderr) to ensure successful checkpoint/restart.
 test7.10   Test if we can trick Slurm into using the wrong user ID
@@ -366,7 +366,8 @@ test7.14   Verify the ability to modify the Derived Exit Code/String fields
 test7.15   Verify signal mask of tasks have no ignored signals.
 test7.16   Verify that auth/munge credential is properly validated.
 test7.17   Test GRES APIs.
-
+test7.18   Test of slurm_hostlist_find().
+test7.19   Test sbatch/srun/salloc path resolving
 
 test9.#    System stress testing. Exercises all commands and daemons.
 =====================================================================
@@ -422,6 +423,7 @@ test12.5   Test sacct --helpformat option.
 test12.6   Test hdf5 acct_gather_profile (--profile=task)
 test12.7   Validate that -D shows the correct state when jobs are requeued.
 test12.8   Validate that a job step reports TIMEOUT inside accounting.
+test12.9   Test of sacct functionality for array jobs.
 
 test13.#   Testing of switch plugins
 ====================================
@@ -706,6 +708,8 @@ test28.7   Confirms job array dependencies.
 test28.8   Test of job array suspend/resume.
 test28.9   Test of maximum running task count in a job array.
 test28.10  Test change to maximum running task count in a job array.
+test28.11  Test that job arrays requesting features with --constraint are
+	   purged from the slurmctld correctly after MinJobAge seconds.
 
 
 test29.#   Testing of smd command and option.
@@ -717,11 +721,6 @@ test29.4   Validate smd -d (--drain-node), and -R (--reason) set.
 test29.5   Validate smd -r (--replace-node) option.
 test29.7   Validates that the smd -j (--job-info) display.
 test29.8   Validate that the MaxSpareNodeCount is enforced
-
-
-test30.#   Test of RPM builds.
-==============================
-test30.1   Validates that RPMs are built with the correct prefix.
 
 
 test31.#   Test of Slurm Epilog and Prolog.
@@ -809,9 +808,3 @@ test38.14  Test pack job step output file labling and different commands/args
 test38.15  Test for proper handling of different rank end times
 test38.16  Test environment variables needed by MPI
 test38.17  Test for multiple, out of order srun --pack-group options
-
-test39.#   Test of job --gpu options.
-=====================================
-test39.1   Test full set of sbatch --gpu options and scontrol show job
-test39.2   Test full set of salloc --gpu options and scontrol show job
-test39.3   Test full set of srun --gpu options and scontrol show step

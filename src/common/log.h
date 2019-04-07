@@ -93,11 +93,11 @@ typedef enum {
  * log options: Each of stderr, syslog, and logfile can have a different level
  */
 typedef struct {
-	log_level_t stderr_level;   /* max level to log to stderr         */
-	log_level_t syslog_level;   /* max level to log to syslog         */
-	log_level_t logfile_level;  /* max level to log to logfile        */
-	unsigned    prefix_level:1; /* prefix level (e.g. "debug: ") if 1 */
-	unsigned    buffered:1;     /* Use internal buffer to never block */
+	log_level_t stderr_level;   /* max level to log to stderr            */
+	log_level_t syslog_level;   /* max level to log to syslog            */
+	log_level_t logfile_level;  /* max level to log to logfile           */
+	bool prefix_level;          /* prefix level (e.g. "debug: ") if true */
+	bool buffered;              /* use internal buffer to never block    */
 } 	log_options_t;
 
 extern char *slurm_prog_name;
@@ -242,6 +242,9 @@ extern int get_log_level(void);
  * args are printf style with the following exceptions:
  * %m expands to strerror(errno)
  * %M expand to time stamp, format is configuration dependent
+ * %pJ expands to "JobId=XXXX" for the given job_ptr, with the appropriate
+ *     format for job arrays and hetjob components.
+ * %pS expands to "JobId=XXXX StepId=YYYY" for a given step_ptr.
  * %t expands to strftime("%x %X") [ locally preferred short date/time ]
  * %T expands to rfc2822 date time  [ "dd, Mon yyyy hh:mm:ss GMT offset" ]
  */
@@ -263,5 +266,16 @@ void	debug3(const char *, ...) __attribute__ ((format (printf, 1, 2)));
  */
 void	debug4(const char *, ...) __attribute__ ((format (printf, 1, 2)));
 void	debug5(const char *, ...) __attribute__ ((format (printf, 1, 2)));
+
+/*
+ * Like above logging messages, but prepend "sched: " to the log entry
+ * and route the message into the sched_log if enabled.
+ */
+int	sched_error(const char *, ...) __attribute__ ((format (printf, 1, 2)));
+void	sched_info(const char *, ...) __attribute__ ((format (printf, 1, 2)));
+void	sched_verbose(const char *, ...) __attribute__ ((format (printf, 1, 2)));
+void	sched_debug(const char *, ...) __attribute__ ((format (printf, 1, 2)));
+void	sched_debug2(const char *, ...) __attribute__ ((format (printf, 1, 2)));
+void	sched_debug3(const char *, ...) __attribute__ ((format (printf, 1, 2)));
 
 #endif /* !_LOG_H */

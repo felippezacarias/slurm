@@ -187,7 +187,7 @@ int srun(int ac, char **av)
 	log_init(xbasename(av[0]), logopt, 0, NULL);
 	_set_exit_code();
 
-	if (slurm_select_init(1) != SLURM_SUCCESS )
+	if (slurm_select_init(0) != SLURM_SUCCESS)
 		fatal( "failed to initialize node selection plugin" );
 
 	if (switch_init(0) != SLURM_SUCCESS )
@@ -601,7 +601,7 @@ static void _setup_one_job_env(slurm_opt_t *opt_local, srun_job_t *job,
 	}
 
 	setup_env(env, srun_opt->preserve_env);
-	job->env = environ;
+	env_array_merge(&job->env, (const char **)environ);
 	xfree(env->task_count);
 	xfree(env);
 }

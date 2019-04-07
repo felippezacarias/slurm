@@ -98,7 +98,6 @@ cset sh5util     "${slurm_dir}/bin/sh5util"
 cset sinfo       "${slurm_dir}/bin/sinfo"
 cset smap        "${slurm_dir}/bin/smap"
 cset smd         "${slurm_dir}/bin/smd"
-cset slurmctld   "${slurm_dir}/sbin/slurmctld"
 cset sprio       "${slurm_dir}/bin/sprio"
 cset squeue      "${slurm_dir}/bin/squeue"
 cset srun        "${slurm_dir}/bin/srun"
@@ -1316,7 +1315,16 @@ proc test_cpu_affinity_or_cgroup { } {
 	if { [lsearch $parts "affinity"] != -1 } {
 		set affinity 1
 	} elseif { [lsearch $parts "cgroup"] != -1 } {
-		set affinity 1
+		spawn $scontrol show config
+		expect {
+			-re "TaskAffinity *= yes" {
+				set affinity 1
+				exp_continue
+			}
+			eof {
+				wait
+			}
+		}
 	}
 
 	log_user 1
@@ -2639,6 +2647,10 @@ proc check_accounting_admin_level { } {
 
 	log_user 0
 
+	if { [test_super_user] } {
+		return "Administrator"
+	}
+
 	set user_name [get_my_user_name]
 
 	if { ![string length $user_name] } {
@@ -3047,8 +3059,10 @@ proc scale_to_megs { value factor } {
 		set value [expr $value * 1]
 	} elseif {[string compare $factor "K"] == 0} {
 		set value [expr $value / 1024]
+		set value [expr {round($value)}]
 	} else {
 		set value [expr $value / (1024 * 1024)]
+		set value [expr {round($value)}]
 	}
 
 	return $value
@@ -3074,6 +3088,7 @@ proc scale_to_ks { value factor } {
 		set value [expr $value * 1]
 	} else {
 		set value [expr $value / 1024]
+		set value [expr {round($value)}]
 	}
 
 	return $value
@@ -3528,6 +3543,63 @@ proc get_partition_nodes {partition states} {
 
 #####################################################################
 #
+# Proc: set_partition_maximum_time_limit
+#
+# Purpose: Set the maximum time limit in a given partition
+#
+# Input:   partition - partition to set the max time limit of
+#          limit - the new time limit
+#
+# Returns: 0 if succeeded, -1 if error
+#
+#####################################################################
+
+proc set_partition_maximum_time_limit {partition limit} {
+	global scontrol exit_code
+
+	if {[string length $partition] == 0} {
+		set partition [default_partition]
+		if { $partition == "" } {
+			return 1
+		}
+	}
+
+	if { $limit < -1 } {
+		log_error "Trying to set invalid partition time limit of $limit"
+		return 1
+	}
+	if { $limit == -1 } {
+		set expected_lim "UNLIMITED"
+	} else {
+		set expected_lim limit
+	}
+
+	spawn $scontrol update partitionname=$partition MaxTime=-1
+	expect {
+		timeout {
+			log_error "scontrol not responding"
+			return 1
+		}
+		eof {
+			wait
+		}
+	}
+
+	set maxtime [get_partition_maximum_time_limit $partition]
+	if { $maxtime != $limit } {
+		log_error "Unable to update partition MaxTime, got $maxtime, wanted $limit"
+		return 1
+	}
+	if { $exit_code != 0 } {
+		log_error "set_partition_maximum_time_limit: Unexpected error."
+		return 1
+	}
+
+	return 0
+}
+
+#####################################################################
+#
 # Proc: get_partition_maximum_time_limit
 #
 # Purpose: Get the maximum time limit in a given partition
@@ -3712,6 +3784,71 @@ proc get_node_cores {node} {
 	set cores [expr $sockets_per_node * $cores_per_socket]
 
 	return $cores
+}
+
+#####################################################################
+#
+# Proc: get_node_cpus
+#
+# Purpose:	Given a node, return its total number of threads we account for.
+#		(not always ThreadsPerCore, but how many threads are in use.
+#               i.e. CPUs=6 CoresPerSocket=6 ThreadsPerCore=2 Socket=1 would
+#               result in only 1 thread we care about instead of the 2 listed.)
+#
+# Input: node - node to get threads from
+#
+# Returns: list of node [ tot_cpus threads ] if retrieved, [ -1 -1 ] otherwise
+#
+#####################################################################
+proc get_node_cpus {node} {
+
+	global scontrol number
+	set nthreads -1
+	set nsockets 0
+	set ncores 0
+	set totcpus -1
+
+	if {[string length $node] == 0} {
+		return [list $totcpus $nthreads]
+	}
+
+	# Get the number of CPUs on a node
+	set my_pid [spawn $scontrol show node $node]
+	expect {
+		-re "CoresPerSocket=($number)" {
+			set ncores $expect_out(1,string)
+			exp_continue
+		}
+		-re "CPUTot=($number)" {
+			set totcpus $expect_out(1,string)
+			exp_continue
+		}
+		-re "Sockets=($number)" {
+			set nsockets $expect_out(1,string)
+			exp_continue
+		}
+		-re "ThreadsPerCore=($number)" {
+			set nthreads $expect_out(1,string)
+			exp_continue
+		}
+		timeout {
+			send_user "\nFAILURE: scontrol is not responding\n"
+			slow_kill $scontrol_pid
+			set exit_code 1
+		}
+		eof {
+			wait
+		}
+	}
+
+	set core_cnt [expr $nsockets * $ncores]
+	set thread_cnt [expr $ncores * $nthreads]
+	if {$totcpus != $nthreads && $totcpus == $ncores} {
+		send_user "\nNOTE: Cores rather than threads are being allocated\n"
+		set nthreads 1
+	}
+
+	return [list $totcpus $nthreads]
 }
 
 #####################################################################
@@ -3963,6 +4100,32 @@ proc get_prolog { } {
 	return $prolog
 }
 
+proc expect_extern_step { } {
+	global scontrol
+	# If PrologFlags=contain is in slurm.conf, then an "extern" step will be
+	# launched on each node, so we need to check for 3 steps per
+	# job instead of 2.
+
+	log_user 0
+	set extern_step 0
+	set scon_pid [spawn -noecho $scontrol show config]
+	expect {
+		-re "PrologFlags\\s*=\\s*\[A-z/,\]*Contain" {
+			set extern_step 1
+		}
+		timeout {
+			log_error "scontrol show config not responding\n"
+			exit 1
+		}
+		eof {
+			wait
+		}
+	}
+	log_user 1
+
+	return $extern_step
+}
+
 ################################################################
 #
 # Proc: test_pack_step
@@ -4047,8 +4210,13 @@ proc test_pack_step { } {
 #
 ################################################################
 proc reconfigure { {cluster ""} } {
-	global exit_code scontrol
+	global exit_code scontrol timeout
 
+	#
+	# Increase timeout just in case we're running under valgrind
+	#
+	set save_timeout $timeout
+	set timeout 20
 	if { $cluster == "" } {
 		spawn $scontrol reconfigure
 	} else {
@@ -4074,9 +4242,10 @@ proc reconfigure { {cluster ""} } {
 		}
 	}
 	#
-	# Wait for reconfigure to complete, then return.
+	# Wait for reconfigure to complete, then reset timeout and return.
 	#
 	sleep 5
+	set timeout $save_timeout
 }
 
 proc log_error {msg} {
@@ -4155,8 +4324,12 @@ proc get_gpu_count {} {
 	set count 0
 	set fini 0
 	log_user 0
-	for {set inx 0} {$fini == 0} {incr inx} {
+	for {set inx 1} {$fini == 0} {set inx [expr $inx * 2]} {
 		set job_id 0
+		if {$inx > 32} {
+			set count -1
+			break
+		}
 		spawn $sbatch --gres=gpu:$inx --output=/dev/null --wrap "exit 0"
 		expect {
 			-re "Invalid generic resource" {
@@ -4186,4 +4359,96 @@ proc get_gpu_count {} {
 	}
 	log_user 1
 	return $count
+}
+
+################################################################
+#
+# Proc: get_over_time_limit
+#
+# Returns the value of OverTimeLimit in slurm.conf
+#
+################################################################
+proc get_over_time_limit {} {
+	global number scontrol exit_code
+	set ret 0
+	log_user 0
+	spawn $scontrol show config
+	expect {
+		-re "OverTimeLimit *= *($number) min" {
+			set ret $expect_out(1,string)
+		}
+		timeout {
+			log_error "FAILURE: scontrol not responding"
+			incr exit_code
+		}
+		eof {
+			wait
+		}
+	}
+	log_user 1
+	return $ret
+}
+
+################################################################
+#
+# Proc: get_conf_path
+#
+# Returns the path to the slurm.conf file
+#
+################################################################
+proc get_conf_path { } {
+	global scontrol alpha exit_code
+
+	set config_path ""
+	set got_config 0
+	log_user 0
+	spawn $scontrol show config
+	expect {
+		-re "SLURM_CONF.*= (/.*)/($alpha).*SLURM_VERSION" {
+			set config_path $expect_out(1,string)
+			set got_config 1
+			exp_continue
+		}
+		timeout {
+			send_user "\nFAILURE: scontrol is not responding\n"
+			set exit_code 1
+		}
+		eof {
+			wait
+		}
+	}
+	log_user 1
+
+	if {$got_config != 1} {
+		send_user "\nFAILURE: did not get slurm.conf path\n"
+		set exit_code 1
+	}
+	return $config_path
+}
+
+################################################################
+#
+# Proc: copy_conf
+#
+# Copy the slurm.conf file to the a new file called
+# slurm.conf.orig in the current working directory
+#
+# Input config_path - The path to slurm.conf
+# Input cwd - The full path of the current working directory
+#
+################################################################
+proc copy_conf { config_path cwd } {
+	global bin_cp bin_rm exit_code
+
+	exec $bin_rm -fr $cwd/slurm.conf.orig
+	spawn $bin_cp -v $config_path/slurm.conf $cwd/slurm.conf.orig
+	expect {
+		timeout {
+			send_user "\nFAILURE: slurm.conf was not copied\n"
+			set exit_code 1
+		}
+		eof {
+			wait
+		}
+	}
 }

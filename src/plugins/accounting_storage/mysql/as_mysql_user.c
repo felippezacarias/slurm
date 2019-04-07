@@ -322,7 +322,7 @@ extern int as_mysql_add_users(mysql_conn_t *mysql_conn, uint32_t uid,
 
 		query = xstrdup_printf(
 			"insert into %s (%s) values (%s) "
-			"on duplicate key update deleted=0, mod_time=%ld %s;",
+			"on duplicate key update name=VALUES(name), deleted=0, mod_time=%ld %s;",
 			user_table, cols, vals,
 			(long)now, extra);
 		xfree(cols);
@@ -544,7 +544,7 @@ extern int as_mysql_add_coord(mysql_conn_t *mysql_conn, uint32_t uid,
 	if (query) {
 		xstrfmtcat(query,
 			   " on duplicate key update mod_time=%ld, "
-			   "deleted=0;%s",
+			   "deleted=0, user=VALUES(user);%s",
 			   (long)now, txn_query);
 		if (debug_flags & DEBUG_FLAG_DB_ASSOC)
 			DB_DEBUG(mysql_conn->conn, "query\n%s", query);
@@ -1174,7 +1174,7 @@ extern List as_mysql_get_users(mysql_conn_t *mysql_conn, uid_t uid,
 		if (!(is_admin = is_user_min_admin_level(
 			      mysql_conn, uid, SLURMDB_ADMIN_OPERATOR))) {
 			assoc_mgr_fill_in_user(
-				mysql_conn, &user, 1, NULL);
+				mysql_conn, &user, 1, NULL, false);
 		}
 		if (!is_admin && !user.name) {
 			debug("User %u has no associations, and is not admin, "

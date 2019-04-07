@@ -39,6 +39,7 @@
 #include "pmixp_common.h"
 #include "pmixp_debug.h"
 #include "pmixp_info.h"
+#include "pmixp_coll.h"
 
 /* Server communication */
 static char *_srv_usock_path = NULL;
@@ -51,6 +52,8 @@ static bool _srv_use_direct_conn_ucx = true;
 #else
 static bool _srv_use_direct_conn_ucx = false;
 #endif
+static int _srv_fence_coll_type = PMIXP_COLL_CPERF_RING;
+static bool _srv_fence_coll_barrier = false;
 
 pmix_jobinfo_t _pmixp_job_info;
 
@@ -88,11 +91,31 @@ bool pmixp_info_srv_direct_conn(void){
 }
 
 bool pmixp_info_srv_direct_conn_early(void){
-	return _srv_use_direct_conn_early;
+	return _srv_use_direct_conn_early && _srv_use_direct_conn;
 }
 
 bool pmixp_info_srv_direct_conn_ucx(void){
 	return _srv_use_direct_conn_ucx && _srv_use_direct_conn;
+}
+
+int pmixp_info_srv_fence_coll_type(void)
+{
+	if (!_srv_use_direct_conn) {
+		static bool printed = false;
+		if (!printed && PMIXP_COLL_CPERF_RING == _srv_fence_coll_type) {
+			PMIXP_ERROR("Ring collective algorithm cannot be used "
+				    "with Slurm RPC's communication subsystem. "
+				    "Tree-based collective will be used instead.");
+			printed = true;
+		}
+		return PMIXP_COLL_CPERF_TREE;
+	}
+	return _srv_fence_coll_type;
+}
+
+bool pmixp_info_srv_fence_coll_barrier(void)
+{
+	return _srv_fence_coll_barrier;
 }
 
 /* Job information */
@@ -442,6 +465,28 @@ static int _env_set(char ***env)
 		} else if (!xstrcmp("0", p) || !xstrcasecmp("false", p) ||
 			   !xstrcasecmp("no", p)) {
 			_srv_use_direct_conn_early = false;
+		}
+	}
+
+	/*------------- Fence coll type setting ----------*/
+	p = getenvp(*env, PMIXP_COLL_FENCE);
+	if (p) {
+		if (!xstrcmp("mixed", p)) {
+			_srv_fence_coll_type = PMIXP_COLL_CPERF_MIXED;
+		} else if (!xstrcmp("tree", p)) {
+			_srv_fence_coll_type = PMIXP_COLL_CPERF_TREE;
+		} else if (!xstrcmp("ring", p)) {
+			_srv_fence_coll_type = PMIXP_COLL_CPERF_RING;
+		}
+	}
+	p = getenvp(*env, SLURM_PMIXP_FENCE_BARRIER);
+	if (p) {
+		if (!xstrcmp("1",p) || !xstrcasecmp("true", p) ||
+		    !xstrcasecmp("yes", p)) {
+			_srv_fence_coll_barrier = true;
+		} else if (!xstrcmp("0",p) || !xstrcasecmp("false", p) ||
+			   !xstrcasecmp("no", p)) {
+			_srv_fence_coll_barrier = false;
 		}
 	}
 

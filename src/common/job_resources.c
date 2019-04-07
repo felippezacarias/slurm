@@ -120,10 +120,8 @@ extern int build_job_resources(job_resources_t *job_resrcs,
 		job_resrcs->sock_core_rep_count[sock_inx]++;
 		core_cnt += (cores * socks);
 	}
-#ifndef HAVE_BG
 	job_resrcs->core_bitmap      = bit_alloc(core_cnt);
 	job_resrcs->core_bitmap_used = bit_alloc(core_cnt);
-#endif
 	return SLURM_SUCCESS;
 }
 
@@ -221,8 +219,10 @@ extern int build_job_resources_cpus_array(job_resources_t *job_resrcs_ptr)
  * This is needed after a restart/reconfiguration since nodes can
  * be added or removed from the system resulting in changing in
  * the bitmap size or bit positions */
-extern int reset_node_bitmap(job_resources_t *job_resrcs_ptr, uint32_t job_id)
+extern int reset_node_bitmap(void *void_job_ptr)
 {
+	struct job_record *job_ptr = (struct job_record *) void_job_ptr;
+	job_resources_t *job_resrcs_ptr = job_ptr->job_resrcs;
 	int i;
 
 	if (!job_resrcs_ptr)
@@ -233,8 +233,8 @@ extern int reset_node_bitmap(job_resources_t *job_resrcs_ptr, uint32_t job_id)
 	if (job_resrcs_ptr->nodes &&
 	    (node_name2bitmap(job_resrcs_ptr->nodes, false,
 			      &job_resrcs_ptr->node_bitmap))) {
-		error("Invalid nodes (%s) for job_id %u",
-		      job_resrcs_ptr->nodes, job_id);
+		error("Invalid nodes (%s) for %pJ",
+		      job_resrcs_ptr->nodes, job_ptr);
 		return SLURM_ERROR;
 	} else if (job_resrcs_ptr->nodes == NULL) {
 		job_resrcs_ptr->node_bitmap = bit_alloc(node_record_count);
@@ -242,8 +242,8 @@ extern int reset_node_bitmap(job_resources_t *job_resrcs_ptr, uint32_t job_id)
 
 	i = bit_set_count(job_resrcs_ptr->node_bitmap);
 	if (job_resrcs_ptr->nhosts != i) {
-		error("Invalid change in resource allocation node count for "
-		      "job %u, %u to %d", job_id, job_resrcs_ptr->nhosts, i);
+		error("Invalid change in resource allocation node count for %pJ, %u to %d",
+		      job_ptr, job_resrcs_ptr->nhosts, i);
 		return SLURM_ERROR;
 	}
 	return SLURM_SUCCESS;
@@ -427,44 +427,51 @@ extern void free_job_resources(job_resources_t **job_resrcs_pptr)
 	}
 }
 
-/* Log the contents of a job_resources data structure using info() */
-extern void log_job_resources(uint32_t job_id,
-			      job_resources_t *job_resrcs_ptr)
+/*
+ * Log the contents of a job_resources data structure using info()
+ *
+ * Function argument is void * to avoid a circular dependency between
+ * job_resources.h and slurmctld.h. Cast inside the function here to
+ * resolve that problem for now.
+ */
+extern void log_job_resources(void *void_job_ptr)
 {
+	struct job_record *job_ptr = (struct job_record *) void_job_ptr;
+	job_resources_t *job_resrcs_ptr = job_ptr->job_resrcs;
 	int bit_inx = 0, bit_reps, i;
 	int array_size, node_inx;
 	int sock_inx = 0, sock_reps = 0;
 
 	if (job_resrcs_ptr == NULL) {
-		error("log_job_resources: job_resrcs_ptr is NULL");
+		error("%s: job_resrcs_ptr is NULL", __func__);
 		return;
 	}
 
 	info("====================");
-	info("job_id:%u nhosts:%u ncpus:%u node_req:%u nodes=%s",
-	     job_id, job_resrcs_ptr->nhosts, job_resrcs_ptr->ncpus,
+	info("%pJ nhosts:%u ncpus:%u node_req:%u nodes=%s",
+	     job_ptr, job_resrcs_ptr->nhosts, job_resrcs_ptr->ncpus,
 	     job_resrcs_ptr->node_req, job_resrcs_ptr->nodes);
 
 	if (job_resrcs_ptr->cpus == NULL) {
-		error("log_job_resources: cpus array is NULL");
+		error("%s: cpus array is NULL", __func__);
 		return;
 	}
 	if (job_resrcs_ptr->memory_allocated == NULL) {
-		error("log_job_resources: memory array is NULL");
+		error("%s: memory array is NULL", __func__);
 		return;
 	}
 	if ((job_resrcs_ptr->cores_per_socket == NULL) ||
 	    (job_resrcs_ptr->sockets_per_node == NULL) ||
 	    (job_resrcs_ptr->sock_core_rep_count == NULL)) {
-		error("log_job_resources: socket/core array is NULL");
+		error("%s: socket/core array is NULL", __func__);
 		return;
 	}
 	if (job_resrcs_ptr->core_bitmap == NULL) {
-		error("log_job_resources: core_bitmap is NULL");
+		error("%s: core_bitmap is NULL", __func__);
 		return;
 	}
 	if (job_resrcs_ptr->core_bitmap_used == NULL) {
-		error("log_job_resources: core_bitmap_used is NULL");
+		error("%s: core_bitmap_used is NULL", __func__);
 		return;
 	}
 	array_size = bit_size(job_resrcs_ptr->core_bitmap);
@@ -502,7 +509,7 @@ extern void log_job_resources(uint32_t job_id,
 			job_resrcs_ptr->cores_per_socket[sock_inx];
 		for (i=0; i<bit_reps; i++) {
 			if (bit_inx >= array_size) {
-				error("log_job_resources: array size wrong");
+				error("%s: array size wrong", __func__);
 				break;
 			}
 			if (bit_test(job_resrcs_ptr->core_bitmap,
@@ -535,7 +542,8 @@ extern void log_job_resources(uint32_t job_id,
 extern void pack_job_resources(job_resources_t *job_resrcs_ptr, Buf buffer,
 			       uint16_t protocol_version)
 {
-	uint32_t cluster_flags = slurmdb_setup_cluster_flags();
+	int i;
+	uint32_t core_cnt = 0, sock_recs = 0;
 
 	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		if (job_resrcs_ptr == NULL) {
@@ -587,36 +595,33 @@ extern void pack_job_resources(job_resources_t *job_resrcs_ptr, Buf buffer,
 				     job_resrcs_ptr->nhosts, buffer);
 		else
 			pack64_array(job_resrcs_ptr->memory_used, 0, buffer);
-		if (!(cluster_flags & CLUSTER_FLAG_BG)) {
-			int i;
-			uint32_t core_cnt = 0, sock_recs = 0;
-			xassert(job_resrcs_ptr->cores_per_socket);
-			xassert(job_resrcs_ptr->sock_core_rep_count);
-			xassert(job_resrcs_ptr->sockets_per_node);
 
-			for (i=0; i<job_resrcs_ptr->nhosts; i++) {
-				core_cnt += job_resrcs_ptr->sockets_per_node[i]
-					* job_resrcs_ptr->cores_per_socket[i] *
-					job_resrcs_ptr->sock_core_rep_count[i];
-				sock_recs += job_resrcs_ptr->
-					     sock_core_rep_count[i];
-				if (sock_recs >= job_resrcs_ptr->nhosts)
-					break;
-			}
-			i++;
-			pack16_array(job_resrcs_ptr->sockets_per_node,
-				     (uint32_t) i, buffer);
-			pack16_array(job_resrcs_ptr->cores_per_socket,
-				     (uint32_t) i, buffer);
-			pack32_array(job_resrcs_ptr->sock_core_rep_count,
-				     (uint32_t) i, buffer);
+		xassert(job_resrcs_ptr->cores_per_socket);
+		xassert(job_resrcs_ptr->sock_core_rep_count);
+		xassert(job_resrcs_ptr->sockets_per_node);
 
-			xassert(job_resrcs_ptr->core_bitmap);
-			xassert(job_resrcs_ptr->core_bitmap_used);
-			pack_bit_str_hex(job_resrcs_ptr->core_bitmap, buffer);
-			pack_bit_str_hex(job_resrcs_ptr->core_bitmap_used,
-					 buffer);
+		for (i=0; i < job_resrcs_ptr->nhosts; i++) {
+			core_cnt += job_resrcs_ptr->sockets_per_node[i]
+				* job_resrcs_ptr->cores_per_socket[i] *
+				job_resrcs_ptr->sock_core_rep_count[i];
+			sock_recs += job_resrcs_ptr->
+				     sock_core_rep_count[i];
+			if (sock_recs >= job_resrcs_ptr->nhosts)
+				break;
 		}
+		i++;
+		pack16_array(job_resrcs_ptr->sockets_per_node,
+			     (uint32_t) i, buffer);
+		pack16_array(job_resrcs_ptr->cores_per_socket,
+			     (uint32_t) i, buffer);
+		pack32_array(job_resrcs_ptr->sock_core_rep_count,
+			     (uint32_t) i, buffer);
+
+		xassert(job_resrcs_ptr->core_bitmap);
+		xassert(job_resrcs_ptr->core_bitmap_used);
+		pack_bit_str_hex(job_resrcs_ptr->core_bitmap, buffer);
+		pack_bit_str_hex(job_resrcs_ptr->core_bitmap_used,
+				 buffer);
 	} else {
 		error("pack_job_resources: protocol_version %hu not supported",
 		      protocol_version);
@@ -629,7 +634,6 @@ extern int unpack_job_resources(job_resources_t **job_resrcs_pptr,
 	char *bit_fmt = NULL;
 	uint32_t empty, tmp32;
 	job_resources_t *job_resrcs;
-	uint32_t cluster_flags = slurmdb_setup_cluster_flags();
 
 	xassert(job_resrcs_pptr);
 	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
@@ -677,24 +681,22 @@ extern int unpack_job_resources(job_resources_t **job_resrcs_pptr,
 		if (tmp32 == 0)
 			xfree(job_resrcs->memory_used);
 
-		if (!(cluster_flags & CLUSTER_FLAG_BG)) {
-			safe_unpack16_array(&job_resrcs->sockets_per_node,
-					    &tmp32, buffer);
-			if (tmp32 == 0)
-				xfree(job_resrcs->sockets_per_node);
-			safe_unpack16_array(&job_resrcs->cores_per_socket,
-					    &tmp32, buffer);
-			if (tmp32 == 0)
-				xfree(job_resrcs->cores_per_socket);
-			safe_unpack32_array(&job_resrcs->sock_core_rep_count,
-					    &tmp32, buffer);
-			if (tmp32 == 0)
-				xfree(job_resrcs->sock_core_rep_count);
+		safe_unpack16_array(&job_resrcs->sockets_per_node,
+				    &tmp32, buffer);
+		if (tmp32 == 0)
+			xfree(job_resrcs->sockets_per_node);
+		safe_unpack16_array(&job_resrcs->cores_per_socket,
+				    &tmp32, buffer);
+		if (tmp32 == 0)
+			xfree(job_resrcs->cores_per_socket);
+		safe_unpack32_array(&job_resrcs->sock_core_rep_count,
+				    &tmp32, buffer);
+		if (tmp32 == 0)
+			xfree(job_resrcs->sock_core_rep_count);
 
-			unpack_bit_str_hex(&job_resrcs->core_bitmap, buffer);
-			unpack_bit_str_hex(&job_resrcs->core_bitmap_used,
-					   buffer);
-		}
+		unpack_bit_str_hex(&job_resrcs->core_bitmap, buffer);
+		unpack_bit_str_hex(&job_resrcs->core_bitmap_used,
+				   buffer);
 	} else {
 		error("unpack_job_resources: protocol_version %hu not "
 		      "supported", protocol_version);

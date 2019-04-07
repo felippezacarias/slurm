@@ -202,6 +202,10 @@ int main(int argc, char **argv)
 			list_append(job_req_list, desc);
 		}
 	}
+	if (!desc) {	/* For CLANG false positive */
+		error("Internal parsing error");
+		exit(1);
+	}
 
 	if (job_env_list) {
 		ListIterator desc_iter, env_iter;
@@ -220,9 +224,15 @@ int main(int argc, char **argv)
 		set_envs(&desc->environment, &pack_env, -1);
 		desc->env_size = envcount(desc->environment);
 	}
+	if (!desc) {	/* For CLANG false positive */
+		error("Internal parsing error");
+		exit(1);
+	}
 
-	/* If can run on multiple clusters find the earliest run time
-	 * and run it there */
+	/*
+	 * If can run on multiple clusters find the earliest run time
+	 * and run it there
+	 */
 	if (opt.clusters) {
 		if (job_req_list) {
 			rc = slurmdb_get_first_pack_cluster(job_req_list,
@@ -611,28 +621,8 @@ static int _fill_job_desc_from_opts(job_desc_msg_t *desc)
 
 	if (opt.hold)
 		desc->priority     = 0;
-
-	if (opt.geometry[0] != NO_VAL16) {
-		int dims = slurmdb_setup_cluster_dims();
-
-		for (i = 0; i < dims; i++)
-			desc->geometry[i] = opt.geometry[i];
-	}
-
-	memcpy(desc->conn_type, opt.conn_type, sizeof(desc->conn_type));
-
 	if (opt.reboot)
 		desc->reboot = 1;
-	if (opt.no_rotate)
-		desc->rotate = 0;
-	if (opt.blrtsimage)
-		desc->blrtsimage = xstrdup(opt.blrtsimage);
-	if (opt.linuximage)
-		desc->linuximage = xstrdup(opt.linuximage);
-	if (opt.mloaderimage)
-		desc->mloaderimage = xstrdup(opt.mloaderimage);
-	if (opt.ramdiskimage)
-		desc->ramdiskimage = xstrdup(opt.ramdiskimage);
 
 	/* job constraints */
 	if (opt.pn_min_cpus > -1)

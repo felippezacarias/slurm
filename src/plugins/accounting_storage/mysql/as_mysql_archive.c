@@ -2383,6 +2383,8 @@ static char *_load_jobs(uint16_t rpc_version, Buf buffer,
 			   object.name,
 			   object.nodelist,
 			   object.node_inx,
+			   object.pack_job_id,
+			   object.pack_job_offset,
 			   object.partition,
 			   object.priority,
 			   object.qos,
@@ -3114,7 +3116,7 @@ static uint32_t _archive_table(purge_type_t type, mysql_conn_t *mysql_conn,
 	case PURGE_TXN:
 		query = xstrdup_printf("select %s from \"%s\" where "
 				       "timestamp <= %ld && cluster='%s' "
-				       "order by timestamp asc for update",
+				       "order by timestamp asc",
 				       cols, sql_table,
 				       period_end, cluster_name);
 		break;
@@ -3122,21 +3124,21 @@ static uint32_t _archive_table(purge_type_t type, mysql_conn_t *mysql_conn,
 	case PURGE_CLUSTER_USAGE:
 		query = xstrdup_printf("select %s from \"%s_%s\" where "
 				       "time_start <= %ld "
-				       "order by time_start asc for update",
+				       "order by time_start asc",
 				       cols, cluster_name, sql_table,
 				       period_end);
 		break;
 	case PURGE_JOB:
 		query = xstrdup_printf("select %s from \"%s_%s\" where "
 				       "time_submit < %ld && time_end != 0 "
-				       "order by time_submit asc for update",
+				       "order by time_submit asc",
 				       cols, cluster_name, job_table,
 				       period_end);
 		break;
 	default:
 		query = xstrdup_printf("select %s from \"%s_%s\" where "
 				       "time_start <= %ld && time_end != 0 "
-				       "order by time_start asc for update",
+				       "order by time_start asc",
 				       cols, cluster_name, sql_table,
 				       period_end);
 		break;
@@ -3615,9 +3617,9 @@ extern int as_mysql_jobacct_process_archive_load(
 		int data_allocated, data_read = 0;
 		int state_fd = open(arch_rec->archive_file, O_RDONLY);
 		if (state_fd < 0) {
-			info("No archive file (%s) to recover",
+			info("Could not open archive file `%s`: %m",
 			     arch_rec->archive_file);
-			error_code = ENOENT;
+			error_code = errno;
 		} else {
 			data_allocated = BUF_SIZE + 1;
 			data = xmalloc_nz(data_allocated);

@@ -48,15 +48,15 @@ typedef struct jag_prec {	/* process record */
 	int	last_cpu;	/* last cpu */
 	pid_t	pid;
 	pid_t	ppid;
-	double  ssec;   /* system cpu time */
+	double  ssec; /* system cpu time: To normalize divide by system hertz */
 	/* Units of tres_[in|out] should be raw numbers (bytes/joules) */
 	int     tres_count; /* count of tres in the tres_data */
 	acct_gather_data_t *tres_data; /* array of tres data */
-	double  usec;   /* user cpu time */
+	double  usec; /* user cpu time: To normalize divide by system hertz */
 } jag_prec_t;
 
 typedef struct jag_callbacks {
-	void (*prec_extra) (jag_prec_t *prec);
+	void (*prec_extra) (jag_prec_t *prec, uint32_t taskid);
 	List (*get_precs) (List task_list, bool pgid_plugin, uint64_t cont_id,
 			   struct jag_callbacks *callbacks);
 	void (*get_offspring_data) (List prec_list,

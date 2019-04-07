@@ -123,8 +123,6 @@ present. Build dependencies for various plugins and commands are denoted below:
 		as the default authentication mechanism.</li>
 <li> <b>MySQL</b> MySQL support for accounting will be built if the
 		<i>mysql</i> development library is present.</li>
-<li> <b>OpenSSL</b> The <i>crypto/openssl</i> CryptoType plugin will be built if
-		the <i>openssl</i> development library is present.</li>
 <li> <b>PAM Support</b> PAM support will be added if the <i>PAM</i> development
 		library is installed.</li>
 <li> <b>NUMA Affinity</b> NUMA support in the task/affinity plugin will be
@@ -188,22 +186,14 @@ by configuration, but here is a suggested starting point:
     Compute and Login Nodes</li>
 	<ul>
 	<li>slurm</li>
-	<li>slurm-devel</li>
-	<li>slurm-munge</li>
 	<li>slurm-perlapi</li>
-	<li>slurm-plugins</li>
-	<li>slurm-sjobexit (only prior to version 17.02)</li>
-	<li>slurm-sjstat (only prior to version 17.02)</</li>
-	<li>slurm-torque</li>
+	<li>slurm-slurmctld (only on the head node)</li>
+	<li>slurm-slurmd (only on the compute nodes)</li>
 	</ul>
-<li>Slurmdbd Node</li>
+<li>SlurmDBD Node</li>
 	<ul>
 	<li>slurm</li>
-	<li>slurm-devel</li>
-	<li>slurm-munge</li>
-	<li>slurm-plugins</li>
 	<li>slurm-slurmdbd</li>
-	<li>slurm-sql</li>
 	</ul>
 </ul>
 
@@ -247,20 +237,30 @@ time per the Slurm configuration.
 
 <h3><a name="HA"></a>High Availability</h3>
 
-<p>A backup controller can be configured (see &quot;BackupController&quot; in
-the <a href="#Config">Configuration</a> section below) to take over for the
-primary slurmctld if it ever fails. The backup controller should be
-hosted on a node different from the node hosting the primary slurmctld.
-However, both hosts should mount a common file system containing the
-state information (see &quot;StateSaveLocation&quot; in the <a
-href="#Config">Configuration</a> section below).</p>
+<p>Multiple SlurmctldHost entries can be configured, with any entry beyond the
+first being treated as a backup host. Any backup hosts configured should be on
+a different node than the node hosting the primary slurmctld. However, all
+hosts should mount a common file system containing the state information (see
+&quot;StateSaveLocation&quot; in the <a href="#Config">Configuration</a>
+section below).</p>
 
-<p>The backup controller detects when the primary fails and takes over for it.
-When the primary returns to service, it notifies the backup.
-The backup then saves state and returns to backup mode. The primary
-reads the saved state and resumes normal operation. Other than a
-brief period of non-responsiveness, the transition back and forth
-should go undetected.</p>
+<p>If more than one host is specified, when the primary fails the second listed
+SlurmctldHost will take over for it. When the primary returns to service, it
+notifies the backup.  The backup then saves the state and returns to backup
+mode. The primary reads the saved state and resumes normal operation. Likewise,
+if both of the first two listed hosts fail the third SlurmctldHost will take
+over until the primary returns to service. Other than a brief period of non-
+responsiveness, the transition back and forth should go undetected.</p>
+
+<p>Prior to 18.08, Slurm used the <a href="slurm.conf.html#OPT_BackupAddr">
+&quot;BackupAddr&quot;</a> and <a href="slurm.conf.html#OPT_BackupController">
+&quot;BackupController&quot;</a> parameters for High Availability. These
+parameters still work, but will be deprecated at some point in the future.
+Also see <a href="slurm.conf.html#OPT_SlurmctldPrimaryOnProg">&quot;
+SlurmctldPrimaryOnProg&quot;</a> and
+<a href="slurm.conf.html#OPT_SlurmctldPrimaryOffProg">&quot;
+SlurmctldPrimaryOffProg&quot;</a> to adjust the actions taken when machines
+transition between being the primary controller.</p>
 
 <p>Any time the slurmctld daemon or hardware fails before state information
 reaches disk can result in lost state.
@@ -358,10 +358,7 @@ When installed, the Slurm PAM module will prevent users from logging
 into any node that has not be assigned to that user.
 On job termination, any processes initiated by the user outside of
 Slurm's control may be killed using an <i>Epilog</i> script configured
-in <i>slurm.conf</i>.
-An example of such a script is included as <i>etc/slurm.epilog.clean</i>.
-Without these mechanisms any user can login to any compute node,
-even those allocated to other users.</p>
+in <i>slurm.conf</i>.</p>
 
 <h2><a name="Config"></a>Configuration</h2>
 <p>The Slurm configuration file includes a wide variety of parameters.
@@ -395,12 +392,6 @@ numbers of entries. The node range expression can contain one
 pair of square brackets with a sequence of comma separated
 numbers and/or ranges of numbers separated by a &quot;-&quot;
 (e.g. &quot;linux[0-64,128]&quot;, or &quot;lx[15,18,32-33]&quot;).
-On BlueGene systems only, the square brackets should contain
-pairs of three digit numbers separated by a &quot;x&quot;.
-These numbers indicate the boundaries of a rectangular prism
-(e.g. &quot;bgl[000x144,400x544]&quot;).
-See our <a href="bluegene.html">Blue Gene User and Administrator Guide</a>
-for more details.
 Up to two numeric ranges can be included in the expression
 (e.g. &quot;rack[0-63]_blade[0-41]&quot;).
 If one or more numeric expressions are included, one of them
@@ -482,33 +473,6 @@ This design offers improved performance by removing much of the
 job step initiation overhead from the <i> slurmctld </i> daemon.
 The digital signature mechanism is specified by the <b>CryptoType</b>
 configuration parameter and the default mechanism is MUNGE. </p>
-
-<h3>OpenSSL</h3>
-<p>If using <a href="http://www.openssl.org/">OpenSSL</a> digital signatures,
-unique job credential keys must be created for your site using the program
-<a href="http://www.openssl.org/">openssl</a>.
-<b>You must use openssl and not ssh-genkey to construct these keys.</b>
-An example of how to do this is shown below. Specify file names that
-match the values of <b>JobCredentialPrivateKey</b> and
-<b>JobCredentialPublicCertificate</b> in your configuration file.
-The <b>JobCredentialPrivateKey</b> file must be readable only by <b>SlurmUser</b>.
-The <b>JobCredentialPublicCertificate</b> file must be readable by all users.
-Note that you should build the key files on one node and then distribute
-them to all nodes in the cluster.
-This ensures that all nodes have a consistent set of digital signature
-keys.
-These keys are used by <i>slurmctld</i> to construct a job step
-credential, which is sent to <i>srun</i> and then forwarded to
-<i>slurmd</i> to initiate job steps.</p>
-
-<p class="commandline" style="margin-left:.2in">
-<i>openssl genrsa -out &lt;sysconfdir&gt;/slurm.key 1024</i><br>
-<i>openssl rsa -in &lt;sysconfdir&gt;/slurm.key -pubout -out  &lt;sysconfdir&gt;/slurm.cert</i>
-</p>
-
-<h3>MUNGE</h3>
-<p>If using MUNGE digital signatures, no Slurm keys are required.
-This will be addressed in the installation and configuration of MUNGE.</p>
 
 <h3>Authentication</h3>
 <p>Authentication of communications (identifying who generated a particular
@@ -617,21 +581,22 @@ scontrol: update NodeName=adev13 State=IDLE
 be done after changing the Slurm configuration file.</p>
 <pre>
 adev0: scontrol reconfig
-</pre> <p>Print the curren. Slurm configuration. This also reports if the
+</pre> <p>Print the current Slurm configuration. This also reports if the
 primary and secondary controllers (slurmctld daemons) are responding. To just
 see the state of the controllers, use the command <span class="commandline">ping</span>.</p>
 <pre>
 adev0: scontrol show config
-Configuration data as of 03/19-13:04:12
-AuthType          = auth/munge
-BackupAddr        = eadevj
-BackupController  = adevj
-BOOT_TIME         = 01/10-09:19:21
-CheckpointType    = checkpoint/none
+Configuration data as of 2019-03-29T12:20:45
 ...
-WaitTime          = 0
+SlurmctldAddr           = eadevi
+SlurmctldDebug          = info
+SlurmctldHost[0]        = adevi
+SlurmctldHost[1]        = adevj
+SlurmctldLogFile        = /var/log/slurmctld.log
+...
 
-Slurmctld(primary/backup) at adevi/adevj are UP/UP
+Slurmctld(primary) at adevi is UP
+Slurmctld(backup) at adevj is UP
 </pre> <p>Shutdown all Slurm daemons on all nodes.</p>
 <pre>
 adev0: scontrol shutdown
@@ -765,6 +730,6 @@ cd /usr/ports/sysutils/slurm-wlm && make install
 typical compute nodes.  Installing from source allows the user to enable
 options such as mysql and gui tools via a configuration menu.</p>
 
-<p style="text-align:center;">Last modified 15 February 2018</p>
+<p style="text-align:center;">Last modified 5 April 2019</p>
 
 <!--#include virtual="footer.txt"-->

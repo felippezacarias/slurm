@@ -398,7 +398,7 @@ static void _do_power_work(time_t now)
 			if (!IS_NODE_DOWN(node_ptr) &&
 			    !IS_NODE_DRAIN(node_ptr) &&
 			    !IS_NODE_FAIL(node_ptr))
-				bit_set(avail_node_bitmap,   i);
+				make_node_avail(i);
 			bit_set(power_node_bitmap,   i);
 			bit_set(sleep_node_bitmap,   i);
 			bit_set(suspend_node_bitmap, i);
@@ -575,7 +575,6 @@ extern int power_job_reboot(struct job_record *job_ptr)
 		xfree(nodes);
 		FREE_NULL_BITMAP(feature_node_bitmap);
 	}
-//	if (boot_node_bitmap && job_ptr->reboot) {
 	if (boot_node_bitmap) {
 		/* Reboot nodes with no feature changes */
 		nodes = bitmap2node_name(boot_node_bitmap);
@@ -984,10 +983,10 @@ static void *_init_power_save(void *arg)
 {
         /* Locks: Read nodes */
         slurmctld_lock_t node_read_lock = {
-                NO_LOCK, READ_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
+                NO_LOCK, NO_LOCK, READ_LOCK, NO_LOCK, NO_LOCK };
         /* Locks: Write nodes */
         slurmctld_lock_t node_write_lock = {
-                NO_LOCK, WRITE_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
+                NO_LOCK, NO_LOCK, WRITE_LOCK, NO_LOCK, NO_LOCK };
 	time_t now, boot_time = 0, last_power_scan = 0;
 
 	if (power_save_config && !power_save_enabled) {

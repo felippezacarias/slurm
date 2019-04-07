@@ -106,12 +106,6 @@ extern uint32_t slurmdb_setup_cluster_flags(void)
 		return cluster_flags;
 
 	cluster_flags = 0;
-#ifdef HAVE_BG
-	cluster_flags |= CLUSTER_FLAG_BG;
-#endif
-#ifdef HAVE_BGQ
-	cluster_flags |= CLUSTER_FLAG_BGQ;
-#endif
 #ifdef MULTIPLE_SLURMD
 	cluster_flags |= CLUSTER_FLAG_MULTSD;
 #endif
@@ -129,12 +123,6 @@ extern uint32_t slurmdb_setup_cluster_flags(void)
 
 static uint32_t _str_2_cluster_flags(char *flags_in)
 {
-	if (xstrcasestr(flags_in, "BGQ"))
-		return CLUSTER_FLAG_BGQ;
-
-	if (xstrcasestr(flags_in, "Bluegene"))
-		return CLUSTER_FLAG_BG;
-
 	if (xstrcasestr(flags_in, "AlpsCray")
 	    || xstrcasestr(flags_in, "CrayXT"))
 		return CLUSTER_FLAG_CRAY_A;
@@ -172,18 +160,6 @@ extern uint32_t slurmdb_str_2_cluster_flags(char *flags_in)
 extern char *slurmdb_cluster_flags_2_str(uint32_t flags_in)
 {
 	char *cluster_flags = NULL;
-
-	if (flags_in & CLUSTER_FLAG_BG) {
-		if (cluster_flags)
-			xstrcat(cluster_flags, ",");
-		xstrcat(cluster_flags, "Bluegene");
-	}
-
-	if (flags_in & CLUSTER_FLAG_BGQ) {
-		if (cluster_flags)
-			xstrcat(cluster_flags, ",");
-		xstrcat(cluster_flags, "BGQ");
-	}
 
 	if (flags_in & CLUSTER_FLAG_CRAY_A) {
 		if (cluster_flags)

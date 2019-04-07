@@ -115,12 +115,10 @@ extern int task_cgroup_devices_init(slurm_cgroup_conf_t *slurm_cgroup_conf)
 
 	file = fopen(cgroup_allowed_devices_file, "r");
 	if (!file) {
-		fatal("task/cgroup: %s doesn't exist, this is needed for proper functionality when Constraining Devices.",
+		debug("task/cgroup: unable to open %s: %m",
 		      cgroup_allowed_devices_file);
-		goto error;
 	} else
 		fclose(file);
-
 
 	return SLURM_SUCCESS;
 
@@ -140,36 +138,13 @@ extern int task_cgroup_devices_fini(slurm_cgroup_conf_t *slurm_cgroup_conf)
         if (xcgroup_create(&devices_ns, &devices_cg,"",0,0)
 	    == XCGROUP_SUCCESS) {
                 if (xcgroup_lock(&devices_cg) == XCGROUP_SUCCESS) {
-			int i = 0, npids = 0, cnt = 0;
-			pid_t* pids = NULL;
 			/* First move slurmstepd to the root devices cg
 			 * so we can remove the step/job/user devices
 			 * cg's.  */
 			xcgroup_move_process(&devices_cg, getpid());
 
-			/* There is a delay in the cgroup system when moving the
-			 * pid from one cgroup to another.  This is usually
-			 * short, but we need to wait to make sure the pid is
-			 * out of the step cgroup or we will occur an error
-			 * leaving the cgroup unable to be removed.
-			 */
-			do {
-				xcgroup_get_pids(&step_devices_cg,
-						 &pids, &npids);
-				for (i = 0 ; i<npids ; i++)
-					if (pids[i] == getpid()) {
-						cnt++;
-						break;
-					}
-				xfree(pids);
-			} while ((i < npids) && (cnt < MAX_MOVE_WAIT));
-
-			if (cnt < MAX_MOVE_WAIT)
-				debug3("Took %d checks before stepd pid was removed from the step cgroup.",
-				       cnt);
-			else
-				error("Pid %d is still in the step cgroup.  It might be left uncleaned after the job.",
-				      getpid());
+			xcgroup_wait_pid_moved(&step_devices_cg,
+					       "devices step");
 
 			if (xcgroup_delete(&step_devices_cg) != SLURM_SUCCESS)
                                 debug2("task/cgroup: unable to remove step "
@@ -461,7 +436,6 @@ error:
 	for (k = 0; k < allow_lines; k++) {
 		xfree(allowed_dev_major[k]);
 	}
-	xfree(allowed_dev_major);
 
 	return fstatus;
 }
@@ -522,9 +496,6 @@ static int _read_allowed_devices_file(char **allowed_devices)
 		}
 		fclose(file);
 	}
-	else
-		fatal("%s: %s does not exist, please create this file.",
-		      __func__, cgroup_allowed_devices_file);
 
 	return num_lines;
 }

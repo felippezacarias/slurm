@@ -85,7 +85,6 @@ const char *node_select_syms[] = {
 	"select_p_step_pick_nodes",
 	"select_p_step_start",
 	"select_p_step_finish",
-	"select_p_pack_select_info",
 	"select_p_select_nodeinfo_pack",
 	"select_p_select_nodeinfo_unpack",
 	"select_p_select_nodeinfo_alloc",
@@ -102,21 +101,15 @@ const char *node_select_syms[] = {
 	"select_p_select_jobinfo_unpack",
 	"select_p_select_jobinfo_sprint",
 	"select_p_select_jobinfo_xstrdup",
-	"select_p_update_block",
-	"select_p_update_sub_node",
-	"select_p_fail_cnode",
+	"select_p_update_basil",
 	"select_p_get_info_from_plugin",
 	"select_p_update_node_config",
 	"select_p_update_node_state",
 	"select_p_reconfigure",
 	"select_p_resv_test",
 	"select_p_ba_init",
-	"select_p_ba_fini",
 	"select_p_ba_get_dims",
-	"select_p_ba_cnodelist2bitmap",
 };
-
-strong_alias(destroy_select_ba_request,	slurm_destroy_select_ba_request);
 
 static int select_context_cnt = -1;
 static int select_context_default = -1;
@@ -152,55 +145,6 @@ static int _load_plugins(void *x, void *arg)
 	return 0;
 }
 
-/**
- * delete a block request
- */
-extern void destroy_select_ba_request(void *arg)
-{
-	select_ba_request_t *ba_request = (select_ba_request_t *)arg;
-
-	if (ba_request) {
-		xfree(ba_request->save_name);
-		FREE_NULL_LIST(ba_request->elongate_geos);
-
-		xfree(ba_request->blrtsimage);
-		xfree(ba_request->linuximage);
-		xfree(ba_request->mloaderimage);
-		xfree(ba_request->ramdiskimage);
-
-		xfree(ba_request);
-	}
-}
-
-/**
- * print a block request
- */
-extern void print_select_ba_request(select_ba_request_t* ba_request)
-{
-	int dim;
-	uint32_t cluster_flags = slurmdb_setup_cluster_flags();
-	uint16_t cluster_dims = slurmdb_setup_cluster_dims();
-
-	if (ba_request == NULL){
-		error("print_ba_request Error, request is NULL");
-		return;
-	}
-	debug("  ba_request:");
-	debug("    geometry:\t");
-	for (dim=0; dim<cluster_dims; dim++){
-		debug("%d", ba_request->geometry[dim]);
-	}
-	debug("        size:\t%d", ba_request->size);
-	if (cluster_flags & CLUSTER_FLAG_BGQ) {
-		for (dim=0; dim<cluster_dims; dim++)
-			debug("   conn_type:\t%d", ba_request->conn_type[dim]);
-	} else
-		debug("   conn_type:\t%d", ba_request->conn_type[0]);
-
-	debug("      rotate:\t%d", ba_request->rotate);
-	debug("    elongate:\t%d", ba_request->elongate);
-}
-
 extern int select_char2coord(char coord)
 {
 	if ((coord >= '0') && (coord <= '9'))
@@ -234,21 +178,6 @@ extern int slurm_select_init(bool only_default)
 	if (working_cluster_rec) {
 		/* just ignore warnings here */
 	} else {
-#ifdef HAVE_BG
-		if (xstrcasecmp(select_type, "select/bluegene")) {
-			error("%s is incompatible with BlueGene", select_type);
-			fatal("Use SelectType=select/bluegene");
-		}
-#else
-		if (!xstrcasecmp(select_type, "select/bluegene")) {
-			fatal("Requested SelectType=select/bluegene "
-			      "in slurm.conf, but not running on a BG[L|P|Q] "
-			      "system.  If looking to emulate a BG[L|P|Q] "
-			      "system use --enable-bgl-emulation or "
-			      "--enable-bgp-emulation respectively.");
-		}
-#endif
-
 #ifdef HAVE_ALPS_CRAY
 		if (xstrcasecmp(select_type, "select/alps")) {
 			error("%s is incompatible with Cray system "
@@ -803,17 +732,6 @@ extern int select_g_step_finish(struct step_record *step_ptr, bool killing_step)
 		(step_ptr, killing_step);
 }
 
-extern int select_g_pack_select_info(time_t last_query_time,
-				     uint16_t show_flags, Buf *buffer,
-				     uint16_t protocol_version)
-{
-	if (slurm_select_init(0) < 0)
-		return SLURM_ERROR;
-
-	return (*(ops[select_context_default].pack_select_info))
-		(last_query_time, show_flags, buffer, protocol_version);
-}
-
 extern int select_g_select_nodeinfo_pack(dynamic_plugin_data_t *nodeinfo,
 					 Buf buffer,
 					 uint16_t protocol_version)
@@ -1199,42 +1117,14 @@ extern char *select_g_select_jobinfo_xstrdup(
 }
 
 /*
- * Update specific block (usually something has gone wrong)
- * IN block_desc_ptr - information about the block
+ * Update basil in select/alps
  */
-extern int select_g_update_block (update_block_msg_t *block_desc_ptr)
+extern int select_g_update_basil(void)
 {
 	if (slurm_select_init(0) < 0)
 		return SLURM_ERROR;
 
-	return (*(ops[select_context_default].
-		  update_block))(block_desc_ptr);
-}
-
-/*
- * Update specific sub nodes (usually something has gone wrong)
- * IN block_desc_ptr - information about the block
- */
-extern int select_g_update_sub_node (update_block_msg_t *block_desc_ptr)
-{
-	if (slurm_select_init(0) < 0)
-		return SLURM_ERROR;
-
-	return (*(ops[select_context_default].
-		  update_sub_node))(block_desc_ptr);
-}
-
-/*
- * Fail certain cnodes in a blocks midplane (usually comes from the
- *        IBM runjob mux)
- * IN step_ptr - step that has failed cnodes
- */
-extern int select_g_fail_cnode (struct step_record *step_ptr)
-{
-	if (slurm_select_init(0) < 0)
-		return SLURM_ERROR;
-
-	return (*(ops[select_context_default].fail_cnode))(step_ptr);
+	return (*(ops[select_context_default].update_basil))();
 }
 
 /*
@@ -1337,21 +1227,6 @@ extern void select_g_ba_init(node_info_msg_t *node_info_ptr, bool sanity_check)
 	(*(ops[plugin_id].ba_init))(node_info_ptr, sanity_check);
 }
 
-extern void select_g_ba_fini(void)
-{
-	uint32_t plugin_id;
-
-	if (slurm_select_init(0) < 0)
-		return;
-
-	if (working_cluster_rec)
-		plugin_id = working_cluster_rec->plugin_id_select;
-	else
-		plugin_id = select_context_default;
-
-	(*(ops[plugin_id].ba_fini))();
-}
-
 extern int *select_g_ba_get_dims(void)
 {
 	uint32_t plugin_id;
@@ -1365,19 +1240,4 @@ extern int *select_g_ba_get_dims(void)
 		plugin_id = select_context_default;
 
 	return (*(ops[plugin_id].ba_get_dims))();
-}
-
-extern bitstr_t *select_g_ba_cnodelist2bitmap(char *cnodelist)
-{
-	uint32_t plugin_id;
-
-	if (slurm_select_init(0) < 0)
-		return NULL;
-
-	if (working_cluster_rec)
-		plugin_id = working_cluster_rec->plugin_id_select;
-	else
-		plugin_id = select_context_default;
-
-	return (*(ops[plugin_id].ba_cnodelist2bitmap))(cnodelist);
 }

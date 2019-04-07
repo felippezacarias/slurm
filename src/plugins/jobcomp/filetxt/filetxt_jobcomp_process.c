@@ -142,25 +142,27 @@ static jobcomp_job_rec_t *_parse_line(List job_info_list)
 			job->timelimit = xstrdup(jobcomp_info->val);
 		} else if (!xstrcasecmp("Workdir", jobcomp_info->name)) {
 			job->work_dir = xstrdup(jobcomp_info->val);
-		}
-#ifdef HAVE_BG
-		else if (!xstrcasecmp("MaxProcs", jobcomp_info->name)) {
-			job->max_procs = atoi(jobcomp_info->val);
-		} else if (!xstrcasecmp("Block_Id", jobcomp_info->name)) {
-			job->blockid = xstrdup(jobcomp_info->val);
-		} else if (!xstrcasecmp("Connection", jobcomp_info->name)) {
-			job->connection = xstrdup(jobcomp_info->val);
-		} else if (!xstrcasecmp("reboot", jobcomp_info->name)) {
-			job->reboot = xstrdup(jobcomp_info->val);
-		} else if (!xstrcasecmp("rotate", jobcomp_info->name)) {
-			job->rotate = xstrdup(jobcomp_info->val);
-		} else if (!xstrcasecmp("geometry", jobcomp_info->name)) {
-			job->geo = xstrdup(jobcomp_info->val);
-		} else if (!xstrcasecmp("start", jobcomp_info->name)) {
-			job->bg_start_point = xstrdup(jobcomp_info->val);
-		}
-#endif
-		else {
+		} else if (!xstrcasecmp("ReservationName", jobcomp_info->name)) {
+			job->resv_name = xstrdup(jobcomp_info->val);
+		} else if (!xstrcasecmp("Gres", jobcomp_info->name)) {
+			job->req_gres = xstrdup(jobcomp_info->val);
+		} else if (!xstrcasecmp("Account", jobcomp_info->name)) {
+			job->account = xstrdup(jobcomp_info->val);
+		} else if (!xstrcasecmp("QOS", jobcomp_info->name)) {
+			job->qos_name = xstrdup(jobcomp_info->val);
+		} else if (!xstrcasecmp("WcKey", jobcomp_info->name)) {
+			job->wckey = xstrdup(jobcomp_info->val);
+		} else if (!xstrcasecmp("Cluster", jobcomp_info->name)) {
+			job->cluster = xstrdup(jobcomp_info->val);
+		} else if (!xstrcasecmp("SubmitTime", jobcomp_info->name)) {
+			job->submit_time = xstrdup(jobcomp_info->val);
+		} else if (!xstrcasecmp("EligibleTime", jobcomp_info->name)) {
+			job->eligible_time = xstrdup(jobcomp_info->val);
+		} else if (!xstrcasecmp("DerivedExitCode", jobcomp_info->name)) {
+			job->derived_ec = xstrdup(jobcomp_info->val);
+		} else if (!xstrcasecmp("ExitCode", jobcomp_info->name)) {
+			job->exit_code = xstrdup(jobcomp_info->val);
+		} else {
 			error("Unknown type %s: %s", jobcomp_info->name,
 			      jobcomp_info->val);
 		}

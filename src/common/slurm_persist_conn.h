@@ -43,6 +43,8 @@
 #define PERSIST_FLAG_DBD            0x0001
 #define PERSIST_FLAG_RECONNECT      0x0002
 #define PERSIST_FLAG_ALREADY_INITED 0x0004
+#define PERSIST_FLAG_P_USER_CASE    0x0008
+#define PERSIST_FLAG_SUPPRESS_ERR   0x0010
 
 typedef enum {
 	PERSIST_TYPE_NONE = 0,
@@ -93,6 +95,7 @@ typedef struct {
 
 typedef struct {
 	char *comment;
+	uint16_t flags;
 	uint32_t rc;
 	uint16_t ret_info; /* protocol version we are connecting to since we
 			    * sent the lowest one to begin with, or the return
@@ -186,5 +189,10 @@ extern void slurm_persist_free_rc_msg(persist_rc_msg_t *msg);
 extern Buf slurm_persist_make_rc_msg(slurm_persist_conn_t *persist_conn,
 				     uint32_t rc, char *comment,
 				     uint16_t ret_info);
+
+extern Buf slurm_persist_make_rc_msg_flags(slurm_persist_conn_t *persist_conn,
+					   uint32_t rc, char *comment,
+					   uint16_t flags,
+					   uint16_t ret_info);
 
 #endif

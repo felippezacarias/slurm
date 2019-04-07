@@ -353,7 +353,7 @@ static void _dmdx_req(Buf buf, int nodeid, uint32_t seq_num)
 	}
 exit:
 	/* we don't need this buffer anymore */
-	free_buf(buf);
+	FREE_NULL_BUFFER(buf);
 
 	/* no sense to return errors, engine can't do anything
 	 * anyway. We've notified libpmix, that's enough */
@@ -408,7 +408,7 @@ static void _dmdx_resp(Buf buf, int nodeid, uint32_t seq_num)
 
 	/* call back to libpmix-server */
 	pmixp_lib_modex_invoke(req->cbfunc, status, data, size,
-			       req->cbdata, pmixp_free_Buf, (void *)buf);
+			       req->cbdata, pmixp_free_buf, (void *)buf);
 
 	/* release tracker & list iterator */
 	req = NULL;
@@ -418,7 +418,7 @@ exit:
 	if (SLURM_SUCCESS != rc) {
 		/* we are not expect libpmix to call the callback
 		 * to cleanup this buffer */
-		free_buf(buf);
+		FREE_NULL_BUFFER(buf);
 	}
 	/* no sense to return errors, engine can't do anything
 	 * anyway. We've notified libpmix, that's enough */

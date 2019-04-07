@@ -1,4 +1,4 @@
-.TH sbatch "1" "Slurm Commands" "April 2018" "Slurm Commands"
+.TH sbatch "1" "Slurm Commands" "February 2019" "Slurm Commands"
 
 .SH "NAME"
 sbatch \- Submit a batch script to Slurm.
@@ -35,6 +35,24 @@ The following document describes the influence of various options on the
 allocation of cpus to jobs and tasks.
 .br
 https://slurm.schedmd.com/cpu_management.html
+
+.SH "RETURN VALUE"
+sbatch will return 0 on success or error code on failure.
+
+.SH "SCRIPT PATH RESOLUTION"
+
+.nr step 1 1
+The batch script is resolved in the following order:
+.br
+.IP \n[step]. 3
+If script starts with ".", then path is constructed as:
+current working directory / script
+.IP \n+[step].
+If script starts with a "/", then path is considered absolute.
+.IP \n+[step].
+If script is in current working directory.
+.IP \n+[step].
+If script can be resolved through PATH. See \fBpath_resolution\fR(7).
 
 .SH "OPTIONS"
 .LP
@@ -159,7 +177,7 @@ vertical bar separators. For example:
 The \-\-batch argument must be a subset of the job's
 \fB\-\-constraint\fR=<\fIlist\fR> argument (i.e. the job can not request only
 KNL nodes, but require the script to execute on a Haswell node).
-If the request can not be satisifed from the resources allocated to the job,
+If the request can not be satisfied from the resources allocated to the job,
 the batch script will execute on the first node of the job allocation.
 
 .TP
@@ -298,6 +316,12 @@ For example: "\fB\-\-constraint=[rack1*2&rack2*4]"\fR might
 be used to specify that two nodes must be allocated from nodes with the feature
 of "rack1" and four nodes must be allocated from nodes with the feature
 "rack2".
+
+\fBNOTE:\fR This construct does not support multiple Intel KNL NUMA or MCDRAM
+modes. For example, while "\fB\-\-constraint=[(knl&quad)*2&(knl&hemi)*4]"\fR is
+not supported, "\fB\-\-constraint=[haswell*2&(knl&hemi)*4]"\fR is supported.
+Specification of multiple KNL modes requires the use of a heterogeneous job.
+
 .TP
 \fBParenthesis\fR
 Parenthesis can be used to group like node features together. For example
@@ -419,13 +443,6 @@ Accounting is able to poll for job information. As a result not all of
 accounting information will be present.
 .RE
 
-.\ .TP
-.\ \fB\-\-cpus\-per\-gpu\fR=<\fIncpus\fR>
-.\ Advise Slurm that ensuing job steps will require \fIncpus\fR processors per
-.\ allocated GPU.
-.\ Requires the \fB\-\-gpus\fR option.
-.\ Not compatible with the \fB\-\-cpus\-per\-task\fR option.
-.\ 
 .TP
 \fB\-c\fR, \fB\-\-cpus\-per\-task\fR=<\fIncpus\fR>
 Advise the Slurm controller that ensuing job steps will require \fIncpus\fR
@@ -490,6 +507,10 @@ execution.
 \fBafterany:job_id[:jobid...]\fR
 This job can begin execution after the specified jobs have terminated.
 .TP
+\fBafterburstbuffer:job_id[:jobid...]\fR
+This job can begin execution after the specified jobs have terminated and
+any associated burst buffer stage out operations have completed.
+.TP
 \fBaftercorr:job_id[:jobid...]\fR
 A task of this job array can begin execution after the corresponding task ID
 in the specified job has completed successfully (ran to completion with an
@@ -511,6 +532,8 @@ Gang scheduling of resources in the partition is also not supported.
 \fBsingleton\fR
 This job can begin execution after any previously launched jobs
 sharing the same job name and user have terminated.
+In other words, only one job by that name and owned by that user can be running
+or suspended at any point in time.
 .RE
 
 .TP
@@ -539,22 +562,30 @@ partition's \fBOverSubscribe\fR option takes precedence over the job's option.
 
 .TP
 \fB\-\-export\fR=<\fIenvironment variables [ALL] | NONE\fR>
-Identify which environment variables are propagated to the launched application,
-by default all are propagated.
+Identify which environment variables from the submission environment are
+propagated to the launched application. By default, \fIall\fR are propagated.
 Multiple environment variable names should be comma separated.
 Environment variable names may be specified to propagate the current
 value (e.g. "\-\-export=EDITOR") or specific values
-may be exported (e.g. "\-\-export=EDITOR=/bin/emacs").  In these two examples
-the environment propagated will only contain the variable "EDITOR"
-and nothing else.
-If one desires to add to the environment instead of replacing it have the
-argument include \fIALL\fR (e.g. "\-\-export=EDITOR,ALL").  This will propagate
-"EDITOR" along with the current environment.
-If one desires no environment variables be propagated use the argument
-\fINONE\fR.
-Regardless of this setting, the appropriate "SLURM_*" task environment variables
-are always exported to the environment.
-This option particularly important for jobs that are submitted on one cluster
+may be exported (e.g. "\-\-export=EDITOR=/bin/emacs").
+In these two examples, the \fIpropagated\fR environment will only contain the
+variable \fIEDITOR\fR, along with \fISLURM_*\fR environment variables.
+However, Slurm will then implicitly attempt to load the user's environment on
+the node where the script is being executed, as if \fI\-\-get\-user\-env\fR was
+specified. This will happen whenever \fINONE\fR or environment variables are
+specified.
+If one desires to add to the submission environment instead of
+replacing it, have the argument include \fIALL\fR
+(e.g. "\-\-export=ALL,EDITOR=/bin/emacs"). Make sure \fIALL\fR is specified
+first, since sbatch applies the environment from left to right, overwriting
+as necessary.
+Environment variables propagated from the submission environment will always
+overwrite environment variables found in the user environment on the node.
+If one desires no environment variables be propagated from the submitting
+machine, use the argument \fINONE\fR.
+Regardless of this setting, the appropriate \fISLURM_*\fR
+task environment variables are always exported to the environment.
+This option is particularly important for jobs that are submitted on one cluster
 and execute on a different cluster (e.g. with different paths).
 
 .TP
@@ -603,119 +634,6 @@ If \fBsbatch\fR is run as root, and the \fB\-\-gid\fR option is used,
 submit the job with \fIgroup\fR's group access permissions.  \fIgroup\fR
 may be the group name or the numerical group ID.
 
-.\ .TP
-.\ \fB\-G\fR, \fB\-\-gpus\fR=[<\fitype\fR>:]<\fInumber\fR>
-.\ Specify the total number of GPUs required for the job.
-.\ An optional GPU type specification can be supplied.
-.\ For example "\-\-gpus=volta:3".
-.\ Multiple options can be requested in a comma separated list, for example:
-.\ "\-\-gpus=volta:3,kepler:1".
-.\ See also the \fB\-\-gpus\-per\-node\fR, \fB\-\-gpus\-per\-socket\fR and
-.\ \fB\-\-gpus\-per\-task\fR options.
-.\ 
-.\ .TP
-.\ \fB\-\-gpu\-bind\fR=<\fItype\fR>
-.\ Bind tasks to specific GPUs.
-.\ By default every spawned task can access every GPU allocated to the job.
-.\ 
-.\ Supported \fItype\fR options:
-.\ .RS
-.\ .TP 10
-.\ \fBclosest\fR
-.\ Bind each task to the GPU(s) which are closest.
-.\ In a NUMA environment, each task may be bound to more than one GPU (i.e.
-.\ all GPUs in that NUMA environment).
-.\ .TP
-.\ \fBmap_gpu:<list>\fR
-.\ Bind by setting GPU masks on tasks (or ranks) as specified where <list> is
-.\ <gpu_id_for_task_0>,<gpu_id_for_task_1>,... GPU IDs are interpreted as decimal
-.\ values unless they are preceded with '0x' in which case they interpreted as
-.\ hexadecimal values. If the number of tasks (or ranks) exceeds the number of
-.\ elements in this list, elements in the list will be reused as needed starting
-.\ from the beginning of the list. To simplify support for large task counts,
-.\ the lists may follow a map with an asterisk and repetition count.
-.\ For example "map_cpu:0*4,1*4".
-.\ Not supported unless the entire node is allocated to the job.
-.\ .TP
-.\ \fBmask_gpu:<list>\fR
-.\ Bind by setting GPU masks on tasks (or ranks) as specified where <list> is
-.\ <gpu_mask_for_task_0>,<gpu_mask_for_task_1>,... The mapping is specified for
-.\ a node and identical mapping is applied to the tasks on every node (i.e. the
-.\ lowest task ID on each node is mapped to the first mask specified in the list,
-.\ etc.). GPU masks are always interpreted as hexadecimal values but can be
-.\ preceded with an optional '0x'. Not supported unless the entire node is
-.\ allocated to the job. To simplify support for large task counts, the lists
-.\ may follow a map with an asterisk and repetition count.
-.\ For example "mask_gpu:0x0f*4,0xf0*4".
-.\ Not supported unless the entire node is allocated to the job.
-.\ .RE
-.\ 
-.\ .TP
-.\ \fB\-\-gpu\-freq\fR=[<\fItype\fR]=\fIvalue\fR>[:<\fItype\fR=\fIvalue\fR>]
-.\ Request that GPUs allocated to the job are configured with specific voltage
-.\ and/or frequency values.
-.\ This option can be used to independently configure the GPU and its memory
-.\ frequencies.
-.\ In some cases, system power caps may override the requested values.
-.\ The field \fItype\fR can be "memory" or "voltage".
-.\ If \fItype\fR is not specified. the GPU frequency is implied.
-.\ The \fIvalue\fR field can either be "low", "medium", "high", "highm1" or
-.\ a numeric value (megahertz or volts).
-.\ If the specified numeric value is not possible, a value as close as
-.\ possible will be used. See below for definition of the values.
-.\ Examples of use include "\-\-gpu\-freq\fR=medium:memory=high:voltage=high" and
-.\ \-\-gpu\-freq\fR=450".
-.\ 
-.\ Supported \fIvalue\fR definitions:
-.\ .RS
-.\ .TP 10
-.\ \fBlow\fR
-.\ the lowest available frequency or voltage
-.\ .TP
-.\ \fBmedium\fR
-.\ attempts to set a frequency  or voltage in the middle of the available range
-.\ .TP
-.\ \fBhigh\fR
-.\ the highest available frequency or voltage
-.\ .TP
-.\ \fBhighm1\fR
-.\ (high minus one) will select the next highest available frequency or voltage
-.\ .RE
-.\ 
-.\ .TP
-.\ \fB\-\-gpus\-per\-node\fR=[<\fitype\fR>:]<\fInumber\fR>
-.\ Specify the number of GPUs required for the job on each node included in
-.\ the job's resource allocation.
-.\ An optional GPU type specification can be supplied.
-.\ For example "\-\-gpus\-per\-node=volta:3".
-.\ Multiple options can be requested in a comma separated list, for example:
-.\ "\-\-gpus\-per\-node=volta:3,kepler:1".
-.\ See also the \fB\-\-gpus\fR, \fB\-\-gpus\-per\-socket\fR and
-.\ \fB\-\-gpus\-per\-task\fR options.
-.\ 
-.\ .TP
-.\ \fB\-\-gpus\-per\-socket\fR=[<\fitype\fR>:]<\fInumber\fR>
-.\ Specify the number of GPUs required for the job on each socket included in
-.\ the job's resource allocation.
-.\ An optional GPU type specification can be supplied.
-.\ For example "\-\-gpus\-per\-socket=volta:3".
-.\ Multiple options can be requested in a comma separated list, for example:
-.\ "\-\-gpus\-per\-socket=volta:3,kepler:1".
-.\ See also the \fB\-\-gpus\fR, \fB\-\-gpus\-per\-node\fR and
-.\ \fB\-\-gpus\-per\-task\fR options.
-.\ 
-.\ .TP
-.\ \fB\-\-gpus\-per\-task\fR=[<\fitype\fR>:]<\fInumber\fR>
-.\ Specify the number of GPUs required for the job on each task to be spawned
-.\ in the job's resource allocation.
-.\ An optional GPU type specification can be supplied.
-.\ This option requires the specification of a task count.
-.\ For example "\-\-gpus\-per\-task=volta:1".
-.\ Multiple options can be requested in a comma separated list, for example:
-.\ "\-\-gpus\-per\-task=volta:3,kepler:1".
-.\ See also the \fB\-\-gpus\fR, \fB\-\-gpus\-per\-socket\fR and
-.\ \fB\-\-gpus\-per\-node\fR options.
-.\ 
 .TP
 \fB\-\-gres\fR=<\fIlist\fR>
 Specifies a comma delimited list of generic consumable resources.
@@ -727,20 +645,33 @@ The available generic consumable resources is configurable by the system
 administrator.
 A list of available generic consumable resources will be printed and the
 command will exit if the option argument is "help".
-Examples of use include "\-\-gres=gpu:2,mic=1", "\-\-gres=gpu:kepler:2", and
+Examples of use include "\-\-gres=gpu:2,mic:1", "\-\-gres=gpu:kepler:2", and
 "\-\-gres=help".
 
 .TP
-\fB\-\-gres\-flags\fR=enforce\-binding
-If set, the only CPUs available to the job will be those bound to the selected
-GRES (i.e. the CPUs identified in the gres.conf file will be strictly enforced
-rather than advisory). This option may result in delayed initiation of a job.
+\fB\-\-gres\-flags\fR=<\fItype\fR>
+Specify generic resource task binding options.
+.RS
+.TP
+.B disable\-binding
+Disable filtering of CPUs with respect to generic resource locality.
+This option is currently required to use more CPUs than are bound to a GRES
+(i.e. if a GPU is bound to the CPUs on one socket, but resources on more than
+one socket are required to run the job).
+This option may permit a job to be allocated resources sooner than otherwise
+possible, but may result in lower job performance.
+.TP
+.B enforce\-binding
+The only CPUs available to the job will be those bound to the selected
+GRES (i.e. the CPUs identified in the gres.conf file will be strictly
+enforced). This option may result in delayed initiation of a job.
 For example a job requiring two GPUs and one CPU will be delayed until both
 GPUs on a single socket are available rather than using GPUs bound to separate
 sockets, however the application performance may be improved due to improved
 communication speed.
 Requires the node to be configured with more than one socket and resource
 filtering will be performed on a per\-socket basis.
+.RE
 
 .TP
 \fB\-H, \-\-hold\fR
@@ -979,10 +910,6 @@ This parameter would generally be used if whole nodes
 are allocated to jobs (\fBSelectType=select/linear\fR).
 Also see \fB\-\-mem\-per\-cpu\fR.
 \fB\-\-mem\fR and \fB\-\-mem\-per\-cpu\fR are mutually exclusive.
-.\ FIXME: REMOVE TWO LINES ABOVE
-.\ Also see fB\-\-mem\-per\-cpu\fR and fB\-\-mem\-per\-gpu\fR.
-.\ The \fB\-\-mem\fR, \fB\-\-mem\-per\-cpu\fR and fB\-\-mem\-per\-gpu\fR
-.\ options are mutually exclusive.
 
 NOTE: A memory size specification of zero is treated as a special case and
 grants the job access to all of the memory on each node.
@@ -1018,25 +945,7 @@ of CPUs allocated to a job may be higher than the task count and the value
 of \fB\-\-mem\-per\-cpu\fR should be adjusted accordingly.
 Also see \fB\-\-mem\fR.
 \fB\-\-mem\fR and \fB\-\-mem\-per\-cpu\fR are mutually exclusive.
-.\ FIXME: REMOVE TWO LINES ABOVE
-.\ Also see \fB\-\-mem\fR and fB\-\-mem\-per\-gpu\fR.
-.\ The \fB\-\-mem\fR, \fB\-\-mem\-per\-cpu\fR and fB\-\-mem\-per\-gpu\fR
-.\ options are mutually exclusive.
 
-.\ .TP
-.\ \fB\-\-mem\-per\-gpu\fR=<\fIsize[units]\fR>
-.\ Minimum memory required per allocated GPU.
-.\ Default units are megabytes unless the SchedulerParameters configuration
-.\ parameter includes the "default_gbytes" option for gigabytes.
-.\ Different units can be specified using the suffix [K|M|G|T].
-.\ Default value is \fBDefMemPerGPU\fR and is available on both a global and
-.\ per partition basis.
-.\ If configured, the parameters can be seen using the \fBscontrol show config\fR
-.\ and \fBscontrol show partition\fR commands.
-.\ Also see \fB\-\-mem\fR.
-.\ The \fB\-\-mem\fR, \fB\-\-mem\-per\-cpu\fR and fB\-\-mem\-per\-gpu\fR
-.\ options are mutually exclusive.
-.\ 
 .TP
 \fB\-\-mem\-bind\fR=[{\fIquiet,verbose\fR},]\fItype\fR
 Bind tasks to memory. Used only when the task/affinity plugin is enabled
@@ -1763,6 +1672,12 @@ the sbatch-generated wrapper script is used.
 \fB\-x\fR, \fB\-\-exclude\fR=<\fInode name list\fR>
 Explicitly exclude certain nodes from the resources granted to the job.
 
+.TP
+\fB\-\-x11\fR[=<\fIall\fR|\fIbatch\fR|\fIfirst\fR|\fIlast\fR>]
+Sets up X11 forwarding on all, batch host, first or last node(s) of the
+allocation. This option is only enabled if Slurm was compiled with X11 support
+and PrologFlags=x11 is defined in the slurm.conf. Default is \fIbatch\fR.
+
 .SH \fBfilename pattern\fR
 .PP
 \fBsbatch\fR allows for a filename pattern to contain one or more replacement
@@ -1845,9 +1760,6 @@ Same as \fB\-a, \-\-array\fR
 \fBSBATCH_BATCH\fR
 Same as \fB\-\-batch\fR
 .TP
-\fBSBATCH_BLRTS_IMAGE\fR
-Same as \fB\-\-blrts\-image\fR
-.TP
 \fBSBATCH_CHECKPOINT\fR
 Same as \fB\-\-checkpoint\fR
 .TP
@@ -1857,20 +1769,11 @@ Same as \fB\-\-checkpoint\-dir\fR
 \fBSBATCH_CLUSTERS\fR or \fBSLURM_CLUSTERS\fR
 Same as \fB\-\-clusters\fR
 .TP
-\fBSBATCH_CNLOAD_IMAGE\fR
-Same as \fB\-\-cnload\-image\fR
-.TP
-\fBSBATCH_CONN_TYPE\fR
-Same as \fB\-\-conn\-type\fR
-.TP
 \fBSBATCH_CONSTRAINT\fR
 Same as \fB\-C\fR, \fB\-\-constraint\fR
 .TP
 \fBSBATCH_CORE_SPEC\fR
 Same as \fB\-\-core\-spec\fR
-.\ .TP
-.\ \fBSBATCH_CPUS_PER_GPU\fR
-.\ Same as \fB\-\-cpus\-per\-gpu\fR
 .TP
 \fBSBATCH_DEBUG\fR
 Same as \fB\-v, \-\-verbose\fR
@@ -1887,26 +1790,11 @@ Same as \fB\-\-exclusive\fR
 \fBSBATCH_EXPORT\fR
 Same as \fB\-\-export\fR
 .TP
-\fBSBATCH_GEOMETRY\fR
-Same as \fB\-g, \-\-geometry\fR
-.TP
 \fBSBATCH_GET_USER_ENV\fR
 Same as \fB\-\-get\-user\-env\fR
-.\ .TP
-.\ \fBSBATCH_GPUS\fR
-.\ Same as \fB\-G, \-\-gpus\fR
-.\ .TP
-.\ \fBSBATCH_GPU_BIND\fR
-.\ Same as \fB\-\-gpu\-bind\fR
-.\ .TP
-.\ \fBSBATCH_GPU_FREQ\fR
-.\ Same as \fB\-\-gpu\-freq\fR
-.\ .TP
-.\ \fBSBATCH_GPUS_PER_NODE\fR
-.\ Same as \fB\-\-gpus\-per\-node\fR
-.\ .TP
-.\ \fBSBATCH_GPUS_PER_TASK\fR
-.\ Same as \fB\-\-gpus\-per\-task\fR
+.TP
+\fBSBATCH_GRES\fR
+Same as \-\-gres\fR
 .TP
 \fBSBATCH_GRES_FLAGS\fR
 Same as \-\-gres\-flags\fR
@@ -1917,35 +1805,20 @@ Same as \fB\-\-hint\fR
 \fBSBATCH_IGNORE_PBS\fR
 Same as \fB\-\-ignore\-pbs\fR
 .TP
-\fBSBATCH_IOLOAD_IMAGE\fR
-Same as \fB\-\-ioload\-image\fR
-.TP
 \fBSBATCH_JOBID\fR
 Same as \fB\-\-jobid\fR
 .TP
 \fBSBATCH_JOB_NAME\fR
 Same as \fB\-J, \-\-job\-name\fR
 .TP
-\fBSBATCH_LINUX_IMAGE\fR
-Same as \fB\-\-linux\-image\fR
-.TP
 \fBSBATCH_MEM_BIND\fR
 Same as \fB\-\-mem\-bind\fR
-.\ .TP
-.\ \fBSBATCH_MEM_PER_GPU\fR
-.\ Same as \fB\-\-mem\-per\-gpu\fR
-.TP
-\fBSBATCH_MLOADER_IMAGE\fR
-Same as \fB\-\-mloader\-image\fR
 .TP
 \fBSBATCH_NETWORK\fR
 Same as \fB\-\-network\fR
 .TP
 \fBSBATCH_NO_REQUEUE\fR
 Same as \fB\-\-no\-requeue\fR
-.TP
-\fBSBATCH_NO_ROTATE\fR
-Same as \fB\-R, \-\-no\-rotate\fR
 .TP
 \fBSBATCH_OPEN_MODE\fR
 Same as \fB\-\-open\-mode\fR
@@ -1964,9 +1837,6 @@ Same as \fB\-\-profile\fR
 .TP
 \fBSBATCH_QOS\fR
 Same as \fB\-\-qos\fR
-.TP
-\fBSBATCH_RAMDISK_IMAGE\fR
-Same as \fB\-\-ramdisk\-image\fR
 .TP
 \fBSBATCH_RESERVATION\fR
 Same as \fB\-\-reservation\fR
@@ -2075,10 +1945,6 @@ Name of the cluster on which the job is executing.
 .TP
 \fBSLURM_CPUS_ON_NODE\fR
 Number of CPUS on the allocated node.
-.\ .TP
-.\ \fBSLURM_CPUS_PER_GPU\fR
-.\ Number of CPUs requested per allocated GPU.
-.\ Only set if the \fB\-\-cpus\-per\-gpu\fR option is specified.
 .TP
 \fBSLURM_CPUS_PER_TASK\fR
 Number of cpus requested per task.
@@ -2086,30 +1952,6 @@ Only set if the \fB\-\-cpus\-per\-task\fR option is specified.
 .TP
 \fBSLURM_DISTRIBUTION\fR
 Same as \fB\-m, \-\-distribution\fR
-.\ .TP
-.\ \fBSLURM_GPUS\fR
-.\ Number of GPUs requested.
-.\ Only set if the \fB\-G, \-\-gpus\fR option is specified.
-.\ .TP
-.\ \fBSLURM_GPU_BIND\fR
-.\ Requested binding of tasks to GPU.
-.\ Only set if the \fB\-\-gpu\-bind\fR option is specified.
-.\ .TP
-.\ \fBSLURM_GPU_FREQ\fR
-.\ Requested GPU frequency and voltage.
-.\ Only set if the \fB\-\-gpu\-freq\fR option is specified.
-.\ .TP
-.\ \fBSLURM_GPUS_PER_NODE\fR
-.\ Requested GPU count per allocated node.
-.\ Only set if the \fB\-\-gpus\-per\-node\fR option is specified.
-.\ .TP
-.\ \fBSLURM_GPUS_PER_SOCKET\fR
-.\ Requested GPU count per allocated socket.
-.\ Only set if the \fB\-\-gpus\-per\-socket\fR option is specified.
-.\ .TP
-.\ \fBSLURM_GPUS_PER_TASK\fR
-.\ Requested GPU count per allocated task.
-.\ Only set if the \fB\-\-gpus\-per\-task\fR option is specified.
 .TP
 \fBSLURM_GTIDS\fR
 Global task IDs running on this node.  Zero  origin and comma separated.
@@ -2154,10 +1996,6 @@ Node local task ID for the process within a job.
 .TP
 \fBSLURM_MEM_PER_CPU\fR
 Same as \fB\-\-mem\-per\-cpu\fR
-.\ .TP
-.\ \fBSLURM_MEM_PER_GPU\fR
-.\ Requested memory per allocated GPU.
-.\ Only set if the \fB\-\-mem\-per\-gpu\fR option is specified.
 .TP
 \fBSLURM_MEM_PER_NODE\fR
 Same as \fB\-\-mem\fR

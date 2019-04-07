@@ -601,8 +601,6 @@ int slurm_job_will_run(job_desc_msg_t *req)
 	will_run_response_msg_t *will_run_resp = NULL;
 	char buf[64], local_hostname[64];
 	int rc;
-	uint32_t cluster_flags = slurmdb_setup_cluster_flags();
-	char *type = "processors";
 	char *cluster_name = NULL;
 	void *ptr = NULL;
 
@@ -626,14 +624,24 @@ int slurm_job_will_run(job_desc_msg_t *req)
 			will_run_resp->job_submit_user_msg, -1);
 
 	if ((rc == 0) && will_run_resp) {
-		if (cluster_flags & CLUSTER_FLAG_BG)
-			type = "cnodes";
 		slurm_make_time_str(&will_run_resp->start_time,
 				    buf, sizeof(buf));
-		info("Job %u to start at %s using %u %s on %s",
-		     will_run_resp->job_id, buf,
-		     will_run_resp->proc_cnt, type,
-		     will_run_resp->node_list);
+		if (will_run_resp->part_name) {
+			info("Job %u to start at %s using %u processors on nodes %s in partition %s",
+			     will_run_resp->job_id, buf,
+			     will_run_resp->proc_cnt,
+			     will_run_resp->node_list,
+			     will_run_resp->part_name);
+		} else {
+			/*
+			 * Partition name not provided from slurmctld v17.11
+			 * or earlier. Remove this in the future.
+			 */
+			info("Job %u to start at %s using %u processors on nodes %s",
+			     will_run_resp->job_id, buf,
+			     will_run_resp->proc_cnt,
+			     will_run_resp->node_list);
+		}
 		if (will_run_resp->preemptee_job_id) {
 			ListIterator itr;
 			uint32_t *job_id_ptr;
@@ -674,7 +682,6 @@ extern int slurm_pack_job_will_run(List job_req_list)
 	will_run_response_msg_t *will_run_resp;
 	char buf[64], local_hostname[64] = "", *sep = "";
 	int rc = SLURM_SUCCESS, inx = 0;
-	char *type = "processors";
 	ListIterator iter, itr;
 	time_t first_start = (time_t) 0;
 	uint32_t first_job_id = 0, tot_proc_count = 0, *job_id_ptr;
@@ -735,16 +742,13 @@ extern int slurm_pack_job_will_run(List job_req_list)
 
 
 	if (rc == SLURM_SUCCESS) {
-		uint32_t cluster_flags = slurmdb_setup_cluster_flags();
 		char node_list[1028] = "";
 
-		if (cluster_flags & CLUSTER_FLAG_BG)
-			type = "cnodes";
 		if (hs)
 			hostset_ranged_string(hs, sizeof(node_list), node_list);
 		slurm_make_time_str(&first_start, buf, sizeof(buf));
-		info("Job %u to start at %s using %u %s on %s",
-		     first_job_id, buf, tot_proc_count, type, node_list);
+		info("Job %u to start at %s using %u processors on %s",
+		     first_job_id, buf, tot_proc_count, node_list);
 		if (job_list)
 			info("  Preempts: %s", job_list);
 	}
@@ -1073,7 +1077,7 @@ char *slurm_read_hostfile(char *filename, int n)
 		}
 
 		/*
-		 * Get the string length again just to incase it changed from
+		 * Get the string length again just to in case it changed from
 		 * the above loop
 		 */
 		line_size = strlen(in_line);
@@ -1203,7 +1207,7 @@ static listen_t *_create_allocation_response_socket(char *interface_hostname)
 
 	if (slurm_get_stream_addr(listen->fd, &listen->address) < 0) {
 		error("slurm_get_stream_addr error %m");
-		slurm_shutdown_msg_engine(listen->fd);
+		close(listen->fd);
 		return NULL;
 	}
 	listen->hostname = xstrdup(interface_hostname);
@@ -1219,7 +1223,7 @@ static void _destroy_allocation_response_socket(listen_t *listen)
 {
 	xassert(listen != NULL);
 
-	slurm_shutdown_msg_engine(listen->fd);
+	close(listen->fd);
 	if (listen->hostname)
 		xfree(listen->hostname);
 	xfree(listen);

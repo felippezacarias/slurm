@@ -45,6 +45,15 @@ if {[test_super_user] == 0} {
 }
 
 #
+# Cannot run the test if OverTimeLimit is set, since we test time limits.
+#
+set overtimelim [get_over_time_limit]
+if {$overtimelim != 0} {
+	log_warn "Cannot run this test when OverTimeLimit is set. Exiting now."
+	exit 0
+}
+
+#
 # Confirm the partition name does not already exist
 #
 set found -1
@@ -276,7 +285,7 @@ if {$found != 1} {
 #
 # Test modification of TRESBillingWeights
 #
-set tres_line "cPu=1,mem=0.5G"
+set tres_line "cPu=1,mem=-0.5G,node=.3,energy=-10"
 spawn $scontrol update partitionname=$part_name TRESBillingWeights=$tres_line
 expect {
 	-re "error" {

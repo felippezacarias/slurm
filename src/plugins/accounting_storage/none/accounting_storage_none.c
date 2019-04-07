@@ -36,6 +36,7 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
+#include "src/common/slurm_xlator.h"
 #include "src/common/slurm_accounting_storage.h"
 
 /*
@@ -82,9 +83,10 @@ extern int fini ( void )
 	return SLURM_SUCCESS;
 }
 
-extern void * acct_storage_p_get_connection(const slurm_trigger_callbacks_t *cb,
-                                            int conn_num, bool rollback,
-                                            char *cluster_name)
+extern void * acct_storage_p_get_connection(
+	const slurm_trigger_callbacks_t *cb,
+	int conn_num, uint16_t *persist_conn_flags,
+	bool rollback, char *cluster_name)
 {
 	return NULL;
 }

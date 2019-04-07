@@ -110,18 +110,53 @@ typedef struct {
 	uint64_t all_lustre_read_bytes;
 } lustre_sens_t;
 
-static lustre_sens_t lustre_se = {0,0,0,0,0,0,0,0};
+static lustre_sens_t lustre_se = {0,0,0,0,0,0,0,0,0,0};
+static lustre_sens_t lustre_se_prev = {0,0,0,0,0,0,0,0,0,0};
 
 static uint64_t debug_flags = 0;
 static pthread_mutex_t lustre_lock = PTHREAD_MUTEX_INITIALIZER;
 static int tres_pos = -1;
 
-/* Default path to lustre stats */
-const char proc_base_path[] = "/proc/fs/lustre";
 
-/**
- *  is lustre fs supported
- **/
+/*
+ * _llite_path()
+ *
+ * returns the path to Lustre clients stats (depends on Lustre version)
+ * or NULL if none found
+ *
+ */
+static char *_llite_path(void)
+{
+	static char *llite_path = NULL;
+	int i = 0;
+	DIR *llite_dir;
+	static char *test_paths[] = {
+		"/proc/fs/lustre/llite",
+		"/sys/kernel/debug/lustre/llite",
+		NULL
+	};
+
+	if (llite_path)
+		return llite_path;
+
+	while ((llite_path = test_paths[i++])) {
+		if ((llite_dir = opendir(llite_path))) {
+			closedir(llite_dir);
+			return llite_path;
+		}
+
+		debug("%s: unable to open %s %m", __func__, llite_path);
+	}
+	return NULL;
+}
+
+
+/*
+ * _check_lustre_fs()
+ *
+ * check if Lustre is supported
+ *
+ */
 static int _check_lustre_fs(void)
 {
 	static bool set = false;
@@ -129,23 +164,18 @@ static int _check_lustre_fs(void)
 
 	if (!set) {
 		uint32_t profile = 0;
-		char lustre_directory[BUFSIZ];
-		DIR *proc_dir;
 
 		set = true;
 		acct_gather_profile_g_get(ACCT_GATHER_PROFILE_RUNNING,
 					  &profile);
 		if ((profile & ACCT_GATHER_PROFILE_LUSTRE)) {
-			snprintf(lustre_directory, BUFSIZ,
-				 "%s/llite", proc_base_path);
-			proc_dir = opendir(proc_base_path);
-			if (!proc_dir) {
-				error("%s: not able to read %s %m",
-				      __func__, lustre_directory);
-				rc = SLURM_FAILURE;
-			} else {
-				closedir(proc_dir);
-			}
+			char *llite_path = _llite_path();
+			if (!llite_path) {
+				error("%s: can't find Lustre stats", __func__);
+				rc = SLURM_ERROR;
+			} else
+				debug("%s: using Lustre stats in %s",
+				      __func__, llite_path);
 		} else
 			rc = SLURM_ERROR;
 	}
@@ -154,10 +184,13 @@ static int _check_lustre_fs(void)
 }
 
 /* _read_lustre_counters()
+ *
  * Read counters from all mounted lustre fs
  * from the file stats under the directories:
  *
  * /proc/fs/lustre/llite/lustre-xxxx
+ *  or
+ * /sys/kernel/debug/lustre/llite/lustre-xxxx
  *
  * From the file stat we use 2 entries:
  *
@@ -167,15 +200,18 @@ static int _check_lustre_fs(void)
  */
 static int _read_lustre_counters(void)
 {
-	char lustre_dir[PATH_MAX];
-	char path_stats[PATH_MAX];
+	char *lustre_dir;
 	DIR *proc_dir;
 	struct dirent *entry;
 	FILE *fff;
 	char buffer[BUFSIZ];
+	static bool first = true;
 
-
-	snprintf(lustre_dir, PATH_MAX, "%s/llite", proc_base_path);
+	lustre_dir = _llite_path();
+	if (!lustre_dir) {
+		error("%s: can't find Lustre stats", __func__);
+		return SLURM_ERROR;
+	}
 
 	proc_dir = opendir(lustre_dir);
 	if (proc_dir == NULL) {
@@ -184,6 +220,7 @@ static int _read_lustre_counters(void)
 	}
 
 	while ((entry = readdir(proc_dir))) {
+		char *path_stats = NULL;
 		bool bread;
 		bool bwrote;
 
@@ -191,15 +228,17 @@ static int _read_lustre_counters(void)
 		    || xstrcmp(entry->d_name, "..") == 0)
 			continue;
 
-		snprintf(path_stats, PATH_MAX, "%s/%s/stats", lustre_dir,
-			 entry->d_name);
+		xstrfmtcat(path_stats, "%s/%s/stats",
+			   lustre_dir, entry->d_name);
 		debug3("%s: Found file %s", __func__, path_stats);
 
 		fff = fopen(path_stats, "r");
 		if (fff == NULL) {
 			error("%s: Cannot open %s %m", __func__, path_stats);
+			xfree(path_stats);
 			continue;
 		}
+		xfree(path_stats);
 
 		bread = bwrote = false;
 		while (fgets(buffer, BUFSIZ, fff)) {
@@ -261,22 +300,25 @@ static int _read_lustre_counters(void)
 	lustre_se.last_update_time = lustre_se.update_time;
 	lustre_se.update_time = time(NULL);
 
+	if (first) {
+		memcpy(&lustre_se_prev, &lustre_se, sizeof(lustre_sens_t));
+		first = false;
+	}
+
 	return SLURM_SUCCESS;
 }
 
-
-
-
 /*
- * _thread_update_node_energy calls _read_ipmi_values and updates all values
- * for node consumption
+ *_update_node_filesystem()
+ *
+ * acct_gather_filesystem_p_node_update calls _update_node_filesystem and
+ * updates all values for node Lustre usage
+ *
  */
 static int _update_node_filesystem(void)
 {
-	static acct_gather_data_t previous;
 	static int dataset_id = -1;
 	static bool first = true;
-	acct_gather_data_t current;
 
 	enum {
 		FIELD_READ,
@@ -317,11 +359,6 @@ static int _update_node_filesystem(void)
 			return SLURM_ERROR;
 		}
 
-		previous.num_reads = lustre_se.all_lustre_nb_reads;
-		previous.num_writes = lustre_se.all_lustre_nb_writes;
-		previous.size_read = lustre_se.all_lustre_read_bytes;
-		previous.size_write = lustre_se.all_lustre_write_bytes;
-
 		first = false;
 	}
 
@@ -331,19 +368,18 @@ static int _update_node_filesystem(void)
 	}
 
 	/* Compute the current values read from all lustre-xxxx directories */
-	current.num_reads = lustre_se.all_lustre_nb_reads;
-	current.num_writes = lustre_se.all_lustre_nb_writes;
-	current.size_read = lustre_se.all_lustre_read_bytes;
-	current.size_write = lustre_se.all_lustre_write_bytes;
+	data[FIELD_READ].u64 = lustre_se.all_lustre_nb_reads -
+		lustre_se_prev.all_lustre_nb_reads;
+	data[FIELD_READMB].d =
+		(double)(lustre_se.all_lustre_read_bytes -
+			 lustre_se_prev.all_lustre_read_bytes) / (1 << 20);
+	data[FIELD_WRITE].u64 = lustre_se.all_lustre_nb_writes -
+		lustre_se_prev.all_lustre_nb_writes;
+	data[FIELD_WRITEMB].d =
+		(double)(lustre_se.all_lustre_write_bytes -
+			 lustre_se_prev.all_lustre_write_bytes)	/ (1 << 20);
 
 	/* record sample */
-	data[FIELD_READ].u64 = current.num_reads - previous.num_reads;
-	data[FIELD_READMB].d =
-		(double)(current.size_read - previous.size_read) / (1 << 20);
-	data[FIELD_WRITE].u64 = current.num_writes - previous.num_writes;
-	data[FIELD_WRITEMB].d =
-		(double)(current.size_write - previous.size_write) / (1 << 20);
-
 	if (debug_flags & DEBUG_FLAG_PROFILE) {
 		char str[256];
 		info("PROFILE-Lustre: %s", acct_gather_profile_dataset_str(
@@ -352,11 +388,8 @@ static int _update_node_filesystem(void)
 	acct_gather_profile_g_add_sample_data(dataset_id, (void *)data,
 					      lustre_se.update_time);
 
-	/* Save current as previous and clean up the working
-	 * data structure.
-	 */
-	memcpy(&previous, &current, sizeof(acct_gather_data_t));
-	memset(&lustre_se, 0, sizeof(lustre_sens_t));
+	/* Save current as previous */
+	memcpy(&lustre_se_prev, &lustre_se, sizeof(lustre_sens_t));
 
 	slurm_mutex_unlock(&lustre_lock);
 
@@ -456,11 +489,18 @@ extern int acct_gather_filesystem_p_get_data(acct_gather_data_t *data)
 	}
 
 	/* Obtain the current values read from all lustre-xxxx directories */
+	data[tres_pos].num_reads = lustre_se.all_lustre_nb_reads -
+		lustre_se_prev.all_lustre_nb_reads;
+	data[tres_pos].num_writes = lustre_se.all_lustre_nb_writes -
+		lustre_se_prev.all_lustre_nb_writes;
+	data[tres_pos].size_read =
+		(double)(lustre_se.all_lustre_read_bytes -
+			 lustre_se_prev.all_lustre_read_bytes) / (1 << 20);
+	data[tres_pos].size_write =
+		(double)(lustre_se.all_lustre_write_bytes -
+			 lustre_se_prev.all_lustre_write_bytes)	/ (1 << 20);
 
-	data[tres_pos].num_reads = lustre_se.all_lustre_nb_reads;
-	data[tres_pos].num_writes = lustre_se.all_lustre_nb_writes;
-	data[tres_pos].size_read = lustre_se.all_lustre_read_bytes;
-	data[tres_pos].size_write = lustre_se.all_lustre_write_bytes;
+	memcpy(&lustre_se_prev, &lustre_se, sizeof(lustre_sens_t));
 
 	slurm_mutex_unlock(&lustre_lock);
 	return retval;

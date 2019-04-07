@@ -65,10 +65,10 @@ void pmixp_xfree_xmalloced(void *x)
 	xfree(x);
 }
 
-void pmixp_free_Buf(void *x)
+void pmixp_free_buf(void *x)
 {
 	Buf buf = (Buf)x;
-	free_buf(buf);
+	FREE_NULL_BUFFER(buf);
 }
 
 int pmixp_usock_create_srv(char *path)

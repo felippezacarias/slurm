@@ -109,6 +109,8 @@ static void _init_opts(void)
 	opts.disable_x11 = false;
 }
 
+static slurm_cgroup_conf_t *slurm_cgroup_conf = NULL;
+
 /* Adopts a process into the given step. Returns SLURM_SUCCESS if
  * opts.action_adopt_failure == CALLERID_ACTION_ALLOW or if the process was
  * successfully adopted.
@@ -136,13 +138,23 @@ static int _adopt_process(pam_handle_t *pamh, pid_t pid, step_loc_t *stepd)
 
 	if ((rc == PAM_SUCCESS) && !opts.disable_x11) {
 		int display;
-		display = stepd_get_x11_display(fd, stepd->protocol_version);
+		char *xauthority;
+		display = stepd_get_x11_display(fd, stepd->protocol_version,
+						&xauthority);
 
 		if (display) {
 			char *env;
 			env = xstrdup_printf("DISPLAY=localhost:%d.0", display);
 			pam_putenv(pamh, env);
 			xfree(env);
+		}
+
+		if (xauthority) {
+			char *env;
+			env = xstrdup_printf("XAUTHORITY=%s", xauthority);
+			pam_putenv(pamh, env);
+			xfree(env);
+			xfree(xauthority);
 		}
 	}
 
@@ -542,6 +554,20 @@ static void _parse_opts(pam_handle_t *pamh, int argc, const char **argv)
 					   "unrecognized action_generic_failure=%s, setting to 'allow'",
 					   v);
 			}
+		} else if (!xstrncasecmp(*argv, "action_adopt_failure=", 21)) {
+			v = (char *)(21 + *argv);
+			if (!xstrncasecmp(v, "allow", 5))
+				opts.action_adopt_failure =
+					CALLERID_ACTION_ALLOW;
+			else if (!xstrncasecmp(v, "deny", 4))
+				opts.action_adopt_failure =
+					CALLERID_ACTION_DENY;
+			else {
+				pam_syslog(pamh,
+					   LOG_ERR,
+					   "unrecognized action_adopt_failure=%s, setting to 'allow'",
+					   v);
+			}
 		} else if (!xstrncasecmp(*argv, "log_level=", 10)) {
 			v = (char *)(10 + *argv);
 			opts.log_level = _parse_log_level(pamh, v);
@@ -670,12 +696,15 @@ PAM_EXTERN int pam_sm_acct_mgmt(pam_handle_t *pamh, int flags
 	if (_load_cgroup_config() != SLURM_SUCCESS)
 		return rc;
 
-	/* Check if there are any steps on the node from any user. A failure here
+	/*
+	 * Check if there are any steps on the node from any user. A failure here
 	 * likely means failures everywhere so exit on failure or if no local jobs
-	 * exist. */
+	 * exist. This can also happen if SlurmdSpoolDir cannot be found, or if
+	 * the NodeName cannot be established for some reason.
+	 */
 	steps = stepd_available(NULL, opts.node_name);
 	if (!steps) {
-		error("Error obtaining local step information.");
+		send_user_msg(pamh, "No Slurm jobs found on node.");
 		goto cleanup;
 	}
 
@@ -708,8 +737,12 @@ PAM_EXTERN int pam_sm_acct_mgmt(pam_handle_t *pamh, int flags
 			    (opts.action_adopt_failure ==
 			     CALLERID_ACTION_ALLOW))
 				rc = PAM_SUCCESS;
-			else
+			else {
+				send_user_msg(pamh, "Access denied by "
+					      PAM_MODULE_NAME
+					      ": failed to adopt process into cgroup, denying access because action_adopt_failure=deny");
 				rc = PAM_PERM_DENIED;
+			}
 			goto cleanup;
 		}
 	} else {

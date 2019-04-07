@@ -411,6 +411,12 @@ char *slurm_get_resume_program(void);
  */
 char *slurm_get_state_save_location(void);
 
+/* slurm_get_stepd_loc
+ * get path to the slurmstepd
+ * RET char * - absolute path to the slurmstepd, MUST be xfreed by caller
+ */
+extern char *slurm_get_stepd_loc(void);
+
 /* slurm_get_tmp_fs
  * returns the TmpFS configuration parameter from slurmctld_conf object
  * RET char *    - tmp_fs, MUST be xfreed by caller
@@ -990,12 +996,6 @@ extern int slurm_init_msg_engine(slurm_addr_t * slurm_address);
  */
 extern int slurm_accept_msg_conn(int open_fd, slurm_addr_t * slurm_address);
 
-/* just calls close on an established msg connection
- * IN open_fd	- an open file descriptor to close
- * RET int	- the return code
- */
-extern int slurm_shutdown_msg_engine(int open_fd);
-
 /**********************************************************************\
  * receive message functions
 \**********************************************************************/
@@ -1109,13 +1109,6 @@ extern int slurm_open_controller_conn_spec(int dest,
  * RET slurm_fd		- file descriptor of the connection created
  */
 extern int slurm_open_msg_conn(slurm_addr_t * slurm_address);
-
-/* just calls close on an established msg connection to close
- * IN open_fd	- an open file descriptor to close
- * RET int	- the return code
- */
-extern int slurm_shutdown_msg_conn(int open_fd);
-
 
 /**********************************************************************\
  * stream functions
@@ -1324,13 +1317,16 @@ extern int slurm_send_recv_controller_rc_msg(slurm_msg_t *req, int *rc,
 extern int slurm_send_only_controller_msg(slurm_msg_t *req,
 				slurmdb_cluster_rec_t *comm_cluster_rec);
 
-/* slurm_send_only_node_msg
- * opens a connection to node, sends the node a message then,
- * closes the connection
+/* DO NOT USE THIS. See comment in slurm_protocol_api.c for further info. */
+extern int slurm_send_only_node_msg(slurm_msg_t *request_msg);
+
+/*
+ * slurm_send_msg_maybe
+ * opens a connection, sends a message across while ignoring any errors,
+ * then closes the connection
  * IN request_msg	- slurm_msg request
- * RET int 		- return code
  */
-int slurm_send_only_node_msg(slurm_msg_t * request_msg);
+extern void slurm_send_msg_maybe(slurm_msg_t *request_msg);
 
 /* Send and recv a slurm request and response on the open slurm descriptor
  * Doesn't close the connection.

@@ -138,15 +138,6 @@ int main(int argc, char **argv)
 	_update_logging(true);
 	_update_nice();
 
-	if (slurm_auth_init(NULL) != SLURM_SUCCESS) {
-		fatal("Unable to initialize %s authentication plugin",
-		      slurmdbd_conf->auth_type);
-	}
-	if (slurm_acct_storage_init(NULL) != SLURM_SUCCESS) {
-		fatal("Unable to initialize %s accounting storage plugin",
-		      slurmdbd_conf->storage_type);
-	}
-
 	_kill_old_slurmdbd();
 	if (foreground == 0)
 		_daemonize();
@@ -158,6 +149,21 @@ int main(int argc, char **argv)
 	 * able to write a core dump.
 	 */
 	_init_pidfile();
+
+	/*
+	 * Do plugin init's after _init_pidfile so systemd is happy as
+	 * slurm_acct_storage_init() could take a long time to finish if running
+	 * for the first time after an upgrade.
+	 */
+	if (slurm_auth_init(NULL) != SLURM_SUCCESS) {
+		fatal("Unable to initialize %s authentication plugin",
+		      slurmdbd_conf->auth_type);
+	}
+	if (slurm_acct_storage_init(NULL) != SLURM_SUCCESS) {
+		fatal("Unable to initialize %s accounting storage plugin",
+		      slurmdbd_conf->storage_type);
+	}
+
 	_become_slurm_user();
 	if (foreground == 0)
 		_set_work_dir();
@@ -190,7 +196,7 @@ int main(int argc, char **argv)
 	if (slurmdbd_conf->track_wckey)
 		assoc_init_arg.cache_level |= ASSOC_MGR_CACHE_WCKEY;
 
-	db_conn = acct_storage_g_get_connection(NULL, 0, true, NULL);
+	db_conn = acct_storage_g_get_connection(NULL, 0, NULL, true, NULL);
 	if (assoc_mgr_init(db_conn, &assoc_init_arg, errno) == SLURM_ERROR) {
 		error("Problem getting cache of data");
 		acct_storage_g_close_connection(&db_conn);
@@ -498,22 +504,22 @@ static void _update_logging(bool startup)
 			(LOG_LEVEL_END - 1));
 	}
 
-	log_opts.stderr_level  = slurmdbd_conf->debug_level;
 	log_opts.logfile_level = slurmdbd_conf->debug_level;
-	log_opts.syslog_level  = slurmdbd_conf->debug_level;
 
-	if (foreground) {
-		log_opts.syslog_level = LOG_LEVEL_QUIET;
-	} else {
+	if (foreground)
+		log_opts.stderr_level  = slurmdbd_conf->debug_level;
+	else
 		log_opts.stderr_level = LOG_LEVEL_QUIET;
-		if (!slurmdbd_conf->log_file &&
-		    (slurmdbd_conf->syslog_debug == LOG_LEVEL_QUIET)) {
-			/* Ensure fatal errors get logged somewhere */
- 			log_opts.syslog_level = LOG_LEVEL_FATAL;
-		} else {
-			log_opts.syslog_level = slurmdbd_conf->syslog_debug;
-		}
-	}
+
+	if (slurmdbd_conf->syslog_debug != LOG_LEVEL_END) {
+		log_opts.syslog_level =	slurmdbd_conf->syslog_debug;
+	} else if (foreground) {
+		log_opts.syslog_level = LOG_LEVEL_QUIET;
+	} else if ((slurmdbd_conf->debug_level > LOG_LEVEL_QUIET)
+		   && !slurmdbd_conf->log_file) {
+		log_opts.syslog_level = slurmdbd_conf->debug_level;
+	} else
+		log_opts.syslog_level = LOG_LEVEL_FATAL;
 
 	log_alter(log_opts, SYSLOG_FACILITY_DAEMON, slurmdbd_conf->log_file);
 	log_set_timefmt(slurmdbd_conf->log_fmt);

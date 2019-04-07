@@ -63,6 +63,9 @@ uint32_t my_uid = 0;
 List g_qos_list = NULL;
 List g_res_list = NULL;
 List g_tres_list = NULL;
+
+/* by default, normalize all usernames to lower case */
+bool user_case_norm = true;
 bool tree_display = 0;
 
 static void	_add_it(int argc, char **argv);
@@ -84,6 +87,8 @@ int main(int argc, char **argv)
 	int local_exit_code = 0;
 	char *temp = NULL;
 	int option_index;
+	uint16_t persist_conn_flags = 0;
+
 	static struct option long_options[] = {
 		{"help",     0, 0, 'h'},
 		{"usage",    0, 0, 'h'},
@@ -197,7 +202,8 @@ int main(int argc, char **argv)
 	xfree(temp);
 
 	errno = 0;
-	db_conn = slurmdb_connection_get();
+	db_conn = slurmdb_connection_get2(&persist_conn_flags);
+
 	if (errno != SLURM_SUCCESS) {
 		int tmp_errno = errno;
 		if ((input_field_count == 2) &&
@@ -216,6 +222,9 @@ int main(int argc, char **argv)
 		exit(1);
 	}
 	my_uid = getuid();
+
+	if (persist_conn_flags & PERSIST_FLAG_P_USER_CASE)
+		user_case_norm = false;
 
 	if (input_field_count)
 		exit_flag = 1;

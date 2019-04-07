@@ -39,6 +39,8 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
+#define _GNU_SOURCE
+
 #include "config.h"
 
 #if HAVE_SYS_PRCTL_H
@@ -52,6 +54,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/param.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -80,7 +83,6 @@
 #include "src/common/macros.h"
 #include "src/common/node_select.h"
 #include "src/common/plugstack.h"
-#include "src/common/safeopen.h"
 #include "src/common/slurm_acct_gather_profile.h"
 #include "src/common/slurm_cred.h"
 #include "src/common/slurm_jobacct_gather.h"
@@ -231,9 +233,22 @@ _send_srun_resp_msg(slurm_msg_t *resp_msg, uint32_t nnodes)
 	 * it is resumed */
 	wait_for_resumed(resp_msg->msg_type);
 	while (1) {
-		rc = slurm_send_only_node_msg(resp_msg);
-		if ((rc == SLURM_SUCCESS) || (errno != ETIMEDOUT))
-			break;
+		if (resp_msg->protocol_version >= SLURM_18_08_PROTOCOL_VERSION) {
+			int msg_rc = 0;
+			msg_rc = slurm_send_recv_rc_msg_only_one(resp_msg,
+								 &rc, 0);
+			/* Both must be zero for a successful transmission. */
+			if (!msg_rc && !rc)
+				break;
+		} else {
+			/*
+			 * Old unreliable method. See slurm_send_only_node_msg()
+			 * for further details.
+			 */
+			rc = slurm_send_only_node_msg(resp_msg);
+			if (rc == SLURM_SUCCESS)
+				break;
+		}
 
 		if (!max_retry)
 			max_retry = (nnodes / 1024) + 5;
@@ -265,6 +280,13 @@ static void _local_jobacctinfo_aggregate(
 		from->tres_usage_in_max[TRES_ARRAY_MEM];
 	from->tres_usage_in_tot[TRES_ARRAY_VMEM] =
 		from->tres_usage_in_max[TRES_ARRAY_VMEM];
+
+	/*
+	 * Here base_watts stores the ave of the watts collected so store that
+	 * as the last value so the total will be a total of ave instead of just
+	 * the last watts collected.
+	 */
+	from->tres_usage_out_tot[TRES_ARRAY_ENERGY] = from->energy.base_watts;
 
 	jobacctinfo_aggregate(dest, from);
 }
@@ -1018,12 +1040,13 @@ static int _spawn_job_container(stepd_step_rec_t *job)
 
 #ifdef WITH_SLURM_X11
 		if (job->x11) {
-			int display;
+			int display, len = 0;
+			char *xauthority;
 
 			close(x11_pipe[0]);
 
 			/* will create several detached threads to process */
-			if (setup_x11_forward(job, &display)) {
+			if (setup_x11_forward(job, &display, &xauthority)) {
 				/* ssh forwarding setup failed */
 				error("x11 port forwarding setup failed");
 				exit(127);
@@ -1035,6 +1058,23 @@ static int _spawn_job_container(stepd_step_rec_t *job)
 				error("%s: failed sending display number back: %m",
 				      __func__);
 			}
+
+			/* send back temporary xauthority file location */
+			if (xauthority)
+				len = strlen(xauthority) + 1;
+
+			if (write(x11_pipe[1], &len, sizeof(int))
+			    != sizeof(int)) {
+				error("%s: failed sending XAUTHORITY back: %m",
+				      __func__);
+			}
+
+			if (write(x11_pipe[1], xauthority, len) != len) {
+				error("%s: failed sending XAUTHORITY back: %m",
+				      __func__);
+			}
+
+			xfree(xauthority);
 			close(x11_pipe[1]);
 
 			/*
@@ -1098,6 +1138,8 @@ static int _spawn_job_container(stepd_step_rec_t *job)
 	 * needs to be marked as having failed as well.
 	 */
 	if (job->x11) {
+		int len;
+
 		close(x11_pipe[1]);
 		if (read(x11_pipe[0], &job->x11_display, sizeof(int))
 		    != sizeof(int)) {
@@ -1105,9 +1147,26 @@ static int _spawn_job_container(stepd_step_rec_t *job)
 			      __func__);
 			job->x11_display = 0;
 		}
+
+		if (read(x11_pipe[0], &len, sizeof(int)) != sizeof(int)) {
+			error("%s: failed retrieving x11 authority value: %m",
+			      __func__);
+		}
+
+		if (len)
+			job->x11_xauthority = xmalloc(len);
+
+		if (read(x11_pipe[0], job->x11_xauthority, len) != len) {
+			error("%s: failed retrieving x11 authority value: %m",
+			      __func__);
+		}
+
 		close(x11_pipe[0]);
 
 		debug("x11 forwarding local display is %d", job->x11_display);
+		if (job->x11_xauthority)
+			debug("x11 forwarding local xauthority is %s",
+			      job->x11_xauthority);
 	}
 #endif
 
@@ -1199,8 +1258,8 @@ job_manager(stepd_step_rec_t *job)
 	if ((acct_gather_conf_init() != SLURM_SUCCESS)          ||
 	    (core_spec_g_init() != SLURM_SUCCESS)		||
 	    (switch_init(1) != SLURM_SUCCESS)			||
-	    (slurmd_task_init() != SLURM_SUCCESS)		||
 	    (slurm_proctrack_init() != SLURM_SUCCESS)		||
+	    (slurmd_task_init() != SLURM_SUCCESS)		||
 	    (checkpoint_init(ckpt_type) != SLURM_SUCCESS)	||
 	    (jobacct_gather_init() != SLURM_SUCCESS)		||
 	    (acct_gather_profile_init() != SLURM_SUCCESS)	||
@@ -1674,7 +1733,6 @@ _fork_all_tasks(stepd_step_rec_t *job, bool *io_initialized)
 	jobacct_id_t jobacct_id;
 	char *oom_value;
 	List exec_wait_list = NULL;
-	char *esc;
 	DEF_TIMERS;
 	START_TIMER;
 
@@ -1685,6 +1743,12 @@ _fork_all_tasks(stepd_step_rec_t *job, bool *io_initialized)
 		error("Failed to invoke task plugins: one of task_p_pre_setuid functions returned error");
 		return SLURM_ERROR;
 	}
+
+	/*
+	 * Create hwloc xml file here to avoid threading issues later.
+	 * This has to be done after task_g_pre_setuid().
+	 */
+	xcpuinfo_hwloc_topo_load(NULL, conf->hwloc_xml, false);
 
 	/*
 	 * Temporarily drop effective privileges, except for the euid.
@@ -1735,15 +1799,6 @@ _fork_all_tasks(stepd_step_rec_t *job, bool *io_initialized)
 		error ("_drop_privileges: %m");
 		rc = SLURM_ERROR;
 		goto fail2;
-	}
-
-	/*
-	 * If there is an \ in the path, remove it.
-	 */
-	esc = is_path_escaped(job->cwd);
-	if (esc) {
-		xfree(job->cwd);
-		job->cwd = esc;
 	}
 
 	if (chdir(job->cwd) < 0) {
@@ -2283,53 +2338,69 @@ error:
 	return NULL;
 }
 
-static char *
-_make_batch_script(batch_job_launch_msg_t *msg, char *path)
+static char *_make_batch_script(batch_job_launch_msg_t *msg, char *path)
 {
-	FILE *fp = NULL;
-	char  script[MAXPATHLEN];
+	int flags = O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC;
+	int fd, length;
+	char *script = NULL;
+	char *output;
 
 	if (msg->script == NULL) {
-		error("_make_batch_script: called with NULL script");
+		error("%s: called with NULL script", __func__);
 		return NULL;
 	}
 
-	snprintf(script, sizeof(script), "%s/%s", path, "slurm_script");
-
-again:
-	if ((fp = safeopen(script, "w", SAFEOPEN_CREATE_ONLY)) == NULL) {
-		if ((errno != EEXIST) || (unlink(script) < 0))  {
-			error("couldn't open `%s': %m", script);
-			goto error;
-		}
-		goto again;
+	/* note: should replace this with a length as part of msg */
+	if ((length = strlen(msg->script)) < 1) {
+		error("%s: called with empty script", __func__);
+		return NULL;
 	}
 
-	if (fputs(msg->script, fp) < 0) {
-		(void) fclose(fp);
-		error("fputs: %m");
-		if (errno == ENOSPC)
-			stepd_drain_node("SlurmdSpoolDir is full");
+	xstrfmtcat(script, "%s/%s", path, "slurm_script");
+
+	if ((fd = open(script, flags, S_IRWXU)) < 0) {
+		error("couldn't open `%s': %m", script);
 		goto error;
 	}
 
-	if (fclose(fp) < 0) {
-		error("fclose: %m");
+	if (lseek(fd, length - 1, SEEK_SET) == -1) {
+		error("%s: lseek to %d failed on `%s`: %m",
+		      __func__, length, script);
+		close(fd);
+		goto error;
 	}
+
+	output = mmap(0, length, PROT_WRITE | PROT_READ, MAP_SHARED, fd, 0);
+	if (output == MAP_FAILED) {
+		error("%s: mmap failed", __func__);
+		close(fd);
+		goto error;
+	}
+
+	if (write(fd, "", 1) == -1) {
+		error("%s: write failed", __func__);
+		if (errno == ENOSPC)
+			stepd_drain_node("SlurmdSpoolDir is full");
+		close(fd);
+		goto error;
+	}
+
+	(void) close(fd);
+
+	memcpy(output, msg->script, length);
+
+	munmap(output, length);
 
 	if (chown(script, (uid_t) msg->uid, (gid_t) -1) < 0) {
 		error("chown(%s): %m", path);
 		goto error;
 	}
 
-	if (chmod(script, 0500) < 0) {
-		error("chmod: %m");
-	}
-
-	return xstrdup(script);
+	return script;
 
 error:
 	(void) unlink(script);
+	xfree(script);
 	return NULL;
 
 }

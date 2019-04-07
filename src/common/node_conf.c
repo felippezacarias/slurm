@@ -653,8 +653,7 @@ extern struct node_record *create_node_record (
 	node_ptr = node_record_table_ptr + (node_record_count++);
 	node_ptr->name = xstrdup(node_name);
 	if (!node_hash_table)
-		node_hash_table = xhash_init(_node_record_hash_identity,
-					     NULL, NULL, 0);
+		node_hash_table = xhash_init(_node_record_hash_identity, NULL);
 	xhash_add(node_hash_table, node_ptr);
 
 	node_ptr->config_ptr = config_ptr;
@@ -677,6 +676,7 @@ extern struct node_record *create_node_record (
 	node_ptr->ext_sensors = ext_sensors_alloc();
 	node_ptr->owner = NO_VAL;
 	node_ptr->mcs_label = NULL;
+	node_ptr->next_state = NO_VAL;
 	node_ptr->protocol_version = SLURM_MIN_PROTOCOL_VERSION;
 	xassert (node_ptr->magic = NODE_MAGIC)  /* set value */;
 	return node_ptr;
@@ -949,8 +949,7 @@ extern void rehash_node (void)
 	struct node_record *node_ptr = node_record_table_ptr;
 
 	xhash_free (node_hash_table);
-	node_hash_table = xhash_init(_node_record_hash_identity,
-				     NULL, NULL, 0);
+	node_hash_table = xhash_init(_node_record_hash_identity, NULL);
 	for (i = 0; i < node_record_count; i++, node_ptr++) {
 		if ((node_ptr->name == NULL) ||
 		    (node_ptr->name[0] == '\0'))
@@ -1007,10 +1006,6 @@ extern void cr_init_global_core_data(struct node_record *node_ptr, int node_cnt,
 
 	for (n = 0; n < node_cnt; n++) {
 		uint16_t cores;
-#ifdef HAVE_BG
-		cores = node_ptr[n].sockets;
-
-#else
 		if (fast_schedule) {
 			cores  = node_ptr[n].config_ptr->cores;
 			cores *= node_ptr[n].config_ptr->sockets;
@@ -1018,7 +1013,7 @@ extern void cr_init_global_core_data(struct node_record *node_ptr, int node_cnt,
 			cores  = node_ptr[n].cores;
 			cores *= node_ptr[n].sockets;
 		}
-#endif
+
 		cr_node_num_cores[n] = cores;
 		if (n > 0) {
 			cr_node_cores_offset[n] = cr_node_cores_offset[n-1] +
@@ -1090,7 +1085,7 @@ extern char *find_hostname(uint32_t pos, char *hosts)
 	hostlist_t hostlist = NULL;
 	char *temp = NULL, *host = NULL;
 
-	if (!hosts || (pos == NO_VAL))
+	if (!hosts || (pos == NO_VAL) || (pos == INFINITE))
 		return NULL;
 
 	hostlist = hostlist_create(hosts);

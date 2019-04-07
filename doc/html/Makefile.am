@@ -11,19 +11,18 @@ generated_html = \
 	authplugins.html \
 	bb_plugins.html \
 	big_sys.html \
-	bluegene.html \
 	burst_buffer.html \
 	cgroups.html \
 	checkpoint_blcr.html \
 	checkpoint_plugins.html \
 	cons_res.html \
 	cons_res_share.html \
+	containers.html \
 	contributor.html \
 	core_spec.html \
 	core_spec_plugins.html \
 	cpu_management.html \
 	cray.html \
-	cray_alps.html \
 	crypto_plugins.html \
 	disclaimer.html \
 	dist_plane.html \
@@ -41,7 +40,6 @@ generated_html = \
 	hdf5_profile_user_guide.html \
 	heterogeneous_jobs.html \
 	high_throughput.html \
-	ibm-pe.html \
 	intel_knl.html \
 	jobacct_gatherplugins.html \
 	job_array.html \

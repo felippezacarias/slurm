@@ -37,9 +37,12 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
+#include "src/common/slurm_xlator.h"
 #include "src/common/slurmdbd_pack.h"
 #include "src/common/xsignal.h"
 #include "src/common/xstring.h"
+
+#include "slurmdbd_agent.h"
 
 #define DBD_MAGIC		0xDEAD3219
 #define MAX_AGENT_QUEUE		10000
@@ -477,7 +480,7 @@ end_it:
 /* Open a connection to the Slurm DBD and set slurmdbd_conn */
 static void _open_slurmdbd_conn(bool need_db)
 {
-	bool try_backup = true;
+	char *backup_host = NULL;
 	int rc;
 
 	if (slurmdbd_conn && slurmdbd_conn->fd >= 0) {
@@ -521,16 +524,27 @@ static void _open_slurmdbd_conn(bool need_db)
 			slurmdbd_conn->rem_host);
 	}
 
+	// See if a backup slurmdbd is configured
+	backup_host = slurm_get_accounting_storage_backup_host();
+
 again:
+	// A connection failure is only an error if backup dne or also fails
+	if (backup_host)
+		slurmdbd_conn->flags |= PERSIST_FLAG_SUPPRESS_ERR;
+	else
+		slurmdbd_conn->flags &= (~PERSIST_FLAG_SUPPRESS_ERR);
 
 	if (((rc = slurm_persist_conn_open(slurmdbd_conn)) != SLURM_SUCCESS) &&
-	    try_backup) {
+	    backup_host) {
 		xfree(slurmdbd_conn->rem_host);
-		try_backup = false;
-		if ((slurmdbd_conn->rem_host =
-		     slurm_get_accounting_storage_backup_host()))
-			goto again;
+		// Force the next error to display
+		slurmdbd_conn->comm_fail_time = 0;
+		slurmdbd_conn->rem_host = backup_host;
+		backup_host = NULL;
+		goto again;
 	}
+
+	xfree(backup_host);
 
 	if (rc == SLURM_SUCCESS) {
 		/* set the timeout to the timeout to be used for all other
@@ -824,8 +838,10 @@ static void _shutdown_agent(void)
 
 /* Open a socket connection to SlurmDbd
  * callbacks IN - make agent to process RPCs and contains callback pointers
+ * persist_conn_flags OUT - fill in from response of slurmdbd
  * Returns SLURM_SUCCESS or an error code */
-extern int slurm_open_slurmdbd_conn(const slurm_trigger_callbacks_t *callbacks)
+extern int open_slurmdbd_conn(const slurm_trigger_callbacks_t *callbacks,
+			      uint16_t *persist_conn_flags)
 {
 	int tmp_errno = SLURM_SUCCESS;
 	/* we need to set this up before we make the agent or we will
@@ -835,6 +851,8 @@ extern int slurm_open_slurmdbd_conn(const slurm_trigger_callbacks_t *callbacks)
 
 	if (!slurmdbd_conn) {
 		_open_slurmdbd_conn(1);
+		if (persist_conn_flags)
+			*persist_conn_flags = slurmdbd_conn->flags;
 		tmp_errno = errno;
 	}
 	slurm_mutex_unlock(&slurmdbd_lock);
@@ -866,7 +884,7 @@ extern int slurm_open_slurmdbd_conn(const slurm_trigger_callbacks_t *callbacks)
 }
 
 /* Close the SlurmDBD socket connection */
-extern int slurm_close_slurmdbd_conn(void)
+extern int close_slurmdbd_conn(void)
 {
 	/* NOTE: agent_lock not needed for _shutdown_agent() */
 	_shutdown_agent();
@@ -895,9 +913,9 @@ extern int slurm_close_slurmdbd_conn(void)
  * The RPC will not be queued if an error occurs.
  * The "resp" message must be freed by the caller.
  * Returns SLURM_SUCCESS or an error code */
-extern int slurm_send_recv_slurmdbd_msg(uint16_t rpc_version,
-					slurmdbd_msg_t *req,
-					slurmdbd_msg_t *resp)
+extern int send_recv_slurmdbd_msg(uint16_t rpc_version,
+				  slurmdbd_msg_t *req,
+				  slurmdbd_msg_t *resp)
 {
 	int rc = SLURM_SUCCESS;
 	Buf buffer;
@@ -962,9 +980,9 @@ end_it:
 /* Send an RPC to the SlurmDBD and wait for the return code reply.
  * The RPC will not be queued if an error occurs.
  * Returns SLURM_SUCCESS or an error code */
-extern int slurm_send_slurmdbd_recv_rc_msg(uint16_t rpc_version,
-					   slurmdbd_msg_t *req,
-					   int *resp_code)
+extern int send_slurmdbd_recv_rc_msg(uint16_t rpc_version,
+				     slurmdbd_msg_t *req,
+				     int *resp_code)
 {
 	int rc;
 	slurmdbd_msg_t resp;
@@ -973,7 +991,7 @@ extern int slurm_send_slurmdbd_recv_rc_msg(uint16_t rpc_version,
 	xassert(resp_code);
 
 	memset(&resp, 0, sizeof(slurmdbd_msg_t));
-	rc = slurm_send_recv_slurmdbd_msg(rpc_version, req, &resp);
+	rc = send_recv_slurmdbd_msg(rpc_version, req, &resp);
 	if (rc != SLURM_SUCCESS) {
 		;	/* error message already sent */
 	} else if (resp.msg_type != PERSIST_RC) {
@@ -1022,7 +1040,7 @@ extern int slurm_send_slurmdbd_recv_rc_msg(uint16_t rpc_version,
  * NOTE: slurm_open_slurmdbd_conn() must have been called with callbacks set
  *
  * Returns SLURM_SUCCESS or an error code */
-extern int slurm_send_slurmdbd_msg(uint16_t rpc_version, slurmdbd_msg_t *req)
+extern int send_slurmdbd_msg(uint16_t rpc_version, slurmdbd_msg_t *req)
 {
 	Buf buffer;
 	int cnt, rc = SLURM_SUCCESS;

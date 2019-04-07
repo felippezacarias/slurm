@@ -113,7 +113,6 @@ void slurm_write_ctl_conf ( slurm_ctl_conf_info_msg_t * slurm_ctl_conf_ptr,
 	char *path = NULL;
 	void *ret_list = NULL;
 	uint16_t val, force;
-	uint32_t cluster_flags = slurmdb_setup_cluster_flags();
 	FILE *fp = NULL;
 	partition_info_t *p = NULL;
 	struct records {
@@ -292,26 +291,26 @@ void slurm_write_ctl_conf ( slurm_ctl_conf_info_msg_t * slurm_ctl_conf_ptr,
 
 		if (p[i].def_mem_per_cpu & MEM_PER_CPU) {
 		        if (p[i].def_mem_per_cpu != MEM_PER_CPU)
-		                fprintf(fp, "DefMemPerCPU=%"PRIu64"",
+		                fprintf(fp, " DefMemPerCPU=%"PRIu64"",
 		                        p[i].def_mem_per_cpu & (~MEM_PER_CPU));
 		} else if (p[i].def_mem_per_cpu != 0)
-		        fprintf(fp, "DefMemPerNode=%"PRIu64"",
+		        fprintf(fp, " DefMemPerNode=%"PRIu64"",
 		                p[i].def_mem_per_cpu);
 
 		if (!p[i].allow_accounts && p[i].deny_accounts)
-			fprintf(fp, "DenyAccounts=%s", p[i].deny_accounts);
+			fprintf(fp, " DenyAccounts=%s", p[i].deny_accounts);
 
 		if (!p[i].allow_qos && p[i].deny_qos)
-			fprintf(fp, "DenyQos=%s", p[i].deny_qos);
+			fprintf(fp, " DenyQos=%s", p[i].deny_qos);
 
 		if (p[i].default_time != NO_VAL) {
 			if (p[i].default_time == INFINITE)
-				fprintf(fp, "DefaultTime=UNLIMITED");
+				fprintf(fp, " DefaultTime=UNLIMITED");
 			else {
 		                char time_line[32];
 		                secs2time_str(p[i].default_time * 60, time_line,
 					      sizeof(time_line));
-				fprintf(fp, "DefaultTime=%s", time_line);
+				fprintf(fp, " DefaultTime=%s", time_line);
 			}
 		}
 
@@ -342,19 +341,8 @@ void slurm_write_ctl_conf ( slurm_ctl_conf_info_msg_t * slurm_ctl_conf_ptr,
 		        fprintf(fp, " MaxMemPerNode=%"PRIu64"",
 				p[i].max_mem_per_cpu);
 
-		if (p[i].max_nodes != INFINITE) {
-			char tmp1[16];
-		        if (cluster_flags & CLUSTER_FLAG_BG)
-				convert_num_unit((float)p[i].max_nodes, tmp1,
-						 sizeof(tmp1), UNIT_NONE,
-						 NO_VAL,
-						 CONVERT_NUM_UNIT_EXACT);
-		        else
-		                snprintf(tmp1, sizeof(tmp1), "%u",
-					 p[i].max_nodes);
-
-		        fprintf(fp, "MaxNodes=%s", tmp1);
-		}
+		if (p[i].max_nodes != INFINITE)
+		        fprintf(fp, " MaxNodes=%u", p[i].max_nodes);
 
 		if (p[i].max_time != INFINITE) {
 			char time_line[32];
@@ -363,18 +351,8 @@ void slurm_write_ctl_conf ( slurm_ctl_conf_info_msg_t * slurm_ctl_conf_ptr,
 			fprintf(fp, " MaxTime=%s", time_line);
 		}
 
-		if (p[i].min_nodes != 1) {
-			char tmp1[16];
-			if (cluster_flags & CLUSTER_FLAG_BG)
-				convert_num_unit((float)p[i].min_nodes, tmp1,
-						 sizeof(tmp1), UNIT_NONE,
-						 NO_VAL,
-						 CONVERT_NUM_UNIT_EXACT);
-			else
-			        snprintf(tmp1, sizeof(tmp1), "%u",
-					 p[i].min_nodes);
-			fprintf(fp, " MinNodes=%s", tmp1);
-		}
+		if (p[i].min_nodes != 1)
+			fprintf(fp, " MinNodes=%u", p[i].min_nodes);
 
 		if (p[i].nodes != NULL)
 			fprintf(fp, " Nodes=%s", p[i].nodes);
@@ -470,9 +448,7 @@ void slurm_print_ctl_conf ( FILE* out,
 	uint32_t cluster_flags = slurmdb_setup_cluster_flags();
 	char *tmp2_str = NULL;
 
-	if (cluster_flags & CLUSTER_FLAG_BGQ)
-		select_title = "\nBluegene/Q configuration\n";
-	else if (cluster_flags & CLUSTER_FLAG_CRAY)
+	if (cluster_flags & CLUSTER_FLAG_CRAY)
 		select_title = "\nCray configuration\n";
 
 	if (slurm_ctl_conf_ptr == NULL)
@@ -1478,13 +1454,9 @@ extern void *slurm_ctl_conf_2_key_pairs (slurm_ctl_conf_t* slurm_ctl_conf_ptr)
 
 
 	for (i = 0; i < slurm_ctl_conf_ptr->control_cnt; i++) {
-		if (!slurm_ctl_conf_ptr->control_machine[i])
-			break;
-
 		key_pair = xmalloc(sizeof(config_key_pair_t));
 		xstrfmtcat(key_pair->name, "SlurmctldHost[%d]", i);
-		if (slurm_ctl_conf_ptr->control_addr[i] &&
-		    xstrcmp(slurm_ctl_conf_ptr->control_machine[i],
+		if (xstrcmp(slurm_ctl_conf_ptr->control_machine[i],
 			    slurm_ctl_conf_ptr->control_addr[i])) {
 			xstrfmtcat(key_pair->value, "%s(%s)",
 				   slurm_ctl_conf_ptr->control_machine[i],

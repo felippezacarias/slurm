@@ -54,6 +54,7 @@
 #define OPT_LONG_NOCONVERT 0x103
 #define OPT_LONG_UNITS     0x104
 #define OPT_LONG_FEDR      0x105
+#define OPT_LONG_WHETJOB   0x106
 
 #define JOB_HASH_SIZE 1000
 
@@ -424,6 +425,11 @@ sacct [<OPTION>]                                                            \n \
      -V, --version: Print version.                                          \n\
      -W, --wckeys:                                                          \n\
                    Only send data about these wckeys.  Default is all.      \n\
+     --whole-hetjob=[yes|no]:                                               \n\
+		   If set to 'yes' (or not set), then information about all \n\
+		   the heterogeneous components will be retrieved. If set   \n\
+		   to 'no' only the specific filtered components will be    \n\
+		   retrieved.                                               \n\
      -x, --associations:                                                    \n\
                    Only send data about these association id.  Default is all.\n\
      -X, --allocations:                                                     \n\
@@ -690,6 +696,7 @@ extern void parse_command_line(int argc, char **argv)
                 {"verbose",        no_argument,       0,    'v'},
                 {"version",        no_argument,       0,    'V'},
                 {"wckeys",         required_argument, 0,    'W'},
+                {"whole-hetjob",   optional_argument, 0,    OPT_LONG_WHETJOB},
                 {"associations",   required_argument, 0,    'x'},
                 {0,                0,		      0,    0}};
 
@@ -942,6 +949,19 @@ extern void parse_command_line(int argc, char **argv)
 					list_create(slurm_destroy_char);
 			slurm_addto_char_list(job_cond->wckey_list, optarg);
 			break;
+		case OPT_LONG_WHETJOB:
+			if (!optarg || !xstrcasecmp(optarg, "yes") ||
+			    !xstrcasecmp(optarg, "y"))
+				job_cond->flags |= JOBCOND_FLAG_WHOLE_HETJOB;
+			else if (!xstrcasecmp(optarg, "no") ||
+				 !xstrcasecmp(optarg, "n"))
+				job_cond->flags |= JOBCOND_FLAG_NO_WHOLE_HETJOB;
+			else if (optarg) {
+				error("Invalid --whole-hetjob value \"%s\"."
+				      " Valid values: [yes|no].", optarg);
+				exit(1);
+			}
+			break;
 		case 'V':
 			print_slurm_version();
 			exit(0);
@@ -968,36 +988,54 @@ extern void parse_command_line(int argc, char **argv)
 		log_alter(opts, 0, NULL);
 	}
 
-	if (!job_cond->usage_start && !job_cond->step_list) {
-		struct tm start_tm;
-		job_cond->usage_start = time(NULL);
-		/* If we are looking for job states default to now.
-		   If not default to midnight of the current day.
-		*/
-		if (!job_cond->state_list
-		    || !list_count(job_cond->state_list)) {
-			if (!slurm_localtime_r(&job_cond->usage_start,
-					       &start_tm)) {
-				error("Couldn't get localtime from %ld",
-				      (long)job_cond->usage_start);
-				return;
-			}
-			start_tm.tm_sec = 0;
-			start_tm.tm_min = 0;
-			start_tm.tm_hour = 0;
-			job_cond->usage_start = slurm_mktime(&start_tm);
-		}
+	slurmdb_job_cond_def_start_end(job_cond);
+
+	if (job_cond->usage_end &&
+	    (job_cond->usage_start > job_cond->usage_end)) {
+		char start_str[32], end_str[32];
+		slurm_make_time_str(&job_cond->usage_start, start_str,
+				    sizeof(start_str));
+		slurm_make_time_str(&job_cond->usage_end, end_str,
+				    sizeof(end_str));
+		error("Start time (%s) requested is after end time (%s).",
+		      start_str, end_str);
+		exit(1);
 	}
 
 	if (verbosity > 0) {
 		char start_char[25], end_char[25];
+		char *verbosity_states = NULL;
 
-		slurm_ctime2_r(&job_cond->usage_start, start_char);
-		if (job_cond->usage_end)
-			slurm_ctime2_r(&job_cond->usage_end, end_char);
+		if (job_cond->state_list && list_count(job_cond->state_list)) {
+			char *state;
+			ListIterator itr = list_iterator_create(
+				job_cond->state_list);
+
+			while ((state = list_next(itr))) {
+				if (verbosity_states)
+					xstrcat(verbosity_states, ",");
+				xstrfmtcat(verbosity_states, "%s",
+					   job_state_string_complete(
+						   atol(state)));
+			}
+			list_iterator_destroy(itr);
+		} else
+			verbosity_states = xstrdup("Eligible");
+
+		if (!job_cond->usage_start)
+			strlcpy(start_char, "Epoch 0", sizeof(start_char));
 		else
-			sprintf(end_char, "Now");
-		info("Jobs eligible from %s - %s", start_char, end_char);
+			slurm_ctime2_r(&job_cond->usage_start, start_char);
+
+		slurm_ctime2_r(&job_cond->usage_end, end_char);
+
+		if (xstrcmp(start_char, end_char))
+			info("Jobs %s in the time window from %s to %s",
+			     verbosity_states, start_char, end_char);
+		else
+			info("Jobs %s at the time instant %s",
+			     verbosity_states, start_char);
+		xfree(verbosity_states);
 	}
 
 	debug("Options selected:\n"
@@ -1005,12 +1043,15 @@ extern void parse_command_line(int argc, char **argv)
 	      "\topt_dup=%d\n"
 	      "\topt_field_list=%s\n"
 	      "\topt_help=%d\n"
-	      "\topt_no_steps=%d",
+	      "\topt_no_steps=%d\n"
+	      "\topt_whole_hetjob=%s",
 	      params.opt_completion,
 	      job_cond->flags & JOBCOND_FLAG_DUP,
 	      params.opt_field_list,
 	      params.opt_help,
-	      job_cond->flags & JOBCOND_FLAG_NO_STEP);
+	      job_cond->flags & JOBCOND_FLAG_NO_STEP,
+	      job_cond->flags & JOBCOND_FLAG_WHOLE_HETJOB ? "yes" :
+	      (job_cond->flags & JOBCOND_FLAG_NO_WHOLE_HETJOB ? "no" : 0));
 
 	if (params.opt_completion) {
 		slurmdb_jobcomp_init(params.opt_filein);
@@ -1283,10 +1324,9 @@ extern void parse_command_line(int argc, char **argv)
 	field_count = list_count(print_fields_list);
 
 	if (optind < argc) {
-		debug2("Error: Unknown arguments:");
+		error("Unknown arguments:");
 		for (i=optind; i<argc; i++)
-			debug2(" %s", argv[i]);
-		debug2("\n");
+			error(" %s", argv[i]);
 		exit(1);
 	}
 	return;

@@ -498,14 +498,6 @@ extern int select_p_step_finish(struct step_record *step_ptr, bool killing_step)
 	return other_step_finish(step_ptr, killing_step);
 }
 
-extern int select_p_pack_select_info(time_t last_query_time,
-				     uint16_t show_flags, Buf *buffer_ptr,
-				     uint16_t protocol_version)
-{
-	return other_pack_select_info(last_query_time, show_flags, buffer_ptr,
-				      protocol_version);
-}
-
 extern select_nodeinfo_t *select_p_select_nodeinfo_alloc(void)
 {
 	select_nodeinfo_t *nodeinfo = xmalloc(sizeof(struct select_nodeinfo));
@@ -873,22 +865,12 @@ extern char *select_p_select_jobinfo_xstrdup(select_jobinfo_t *jobinfo,
 	return buf;
 }
 
-extern int select_p_update_block(update_block_msg_t *block_desc_ptr)
+extern int select_p_update_basil(void)
 {
 	if (slurmctld_primary && basil_inventory())
 		return SLURM_ERROR;
 
-	return other_update_block(block_desc_ptr);
-}
-
-extern int select_p_update_sub_node(update_block_msg_t *block_desc_ptr)
-{
-	return other_update_sub_node(block_desc_ptr);
-}
-
-extern int select_p_fail_cnode(struct step_record *step_ptr)
-{
-	return other_fail_cnode(step_ptr);
+	return SLURM_SUCCESS;
 }
 
 extern int select_p_get_info_from_plugin(enum select_plugindata_info dinfo,
@@ -978,14 +960,4 @@ extern int *select_p_ba_get_dims(void)
 	if (select_cray_dim_size[0] != -1)
 		return select_cray_dim_size;
 	return NULL;
-}
-
-extern void select_p_ba_fini(void)
-{
-	other_ba_fini();
-}
-
-extern bitstr_t *select_p_ba_cnodelist2bitmap(char *cnodelist)
-{
-	return other_ba_cnodelist2bitmap(cnodelist);
 }

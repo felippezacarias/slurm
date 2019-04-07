@@ -108,8 +108,7 @@ static void _job_fail_del(void *x)
 	if (job_fail_ptr->pending_job_id) {
 		job_ptr = find_job_record(job_fail_ptr->pending_job_id);
 		if (job_ptr && (job_ptr->user_id == job_fail_ptr->user_id)) {
-			(void) job_signal(job_fail_ptr->pending_job_id,
-					  SIGKILL, 0, 0, false);
+			(void) job_signal(job_ptr, SIGKILL, 0, 0, false);
 		}
 	}
 	xfree(job_fail_ptr->fail_node_cpus);
@@ -789,7 +788,7 @@ static void _kill_job(uint32_t job_id, uid_t cmd_uid)
 {
 	int rc;
 
-	rc = job_signal(job_id, SIGKILL, 0, cmd_uid, false);
+	rc = job_signal_id(job_id, SIGKILL, 0, cmd_uid, false);
 	if (rc) {
 		info("slurmctld/nonstop: can not kill job %u: %s",
 		     job_id, slurm_strerror(rc));
@@ -1715,7 +1714,7 @@ static void _send_event_callbacks(void)
 	ListIterator job_iterator;
 	slurm_addr_t callback_addr;
 	uint32_t callback_flags, callback_jobid;
-	int fd, retry = 0;
+	int fd;
 	ssize_t sent;
 
 	if (!job_fail_list)
@@ -1752,14 +1751,8 @@ static void _send_event_callbacks(void)
 			}
 			sent = slurm_msg_sendto_timeout(fd,
 					(char *) &callback_flags,
-					sizeof(uint32_t), 0, 100000);
-			while ((slurm_shutdown_msg_conn(fd) < 0) &&
-			       (errno == EINTR)) {
-				if (retry++ > 10) {
-					error("nonstop: socket close fail: %m");
-					break;
-				}
-			}
+					sizeof(uint32_t), 100000);
+			(void) close(fd);
 			/* Reset locks and clean-up as needed */
 io_fini:		slurm_mutex_lock(&job_fail_mutex);
 			if ((sent != sizeof(uint32_t)) &&

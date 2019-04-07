@@ -74,6 +74,9 @@
 #include "src/slurmd/slurmstepd/slurmstepd_job.h"
 #include "src/slurmdbd/read_config.h"
 
+#define KB_ADJ 1024
+#define MB_ADJ 1048576
+
 /*
 ** Define slurm-specific aliases for use by plugins, see slurm_xlator.h
 ** for details.
@@ -169,7 +172,7 @@ static void _init_tres_usage(struct jobacctinfo *jobacct,
 		jobacct->tres_usage_out_min[i] = INFINITE64;
 		jobacct->tres_usage_out_tot[i] = INFINITE64;
 
-		if (jobacct_id && jobacct_id->taskid != NO_VAL16) {
+		if (jobacct_id && jobacct_id->taskid != NO_VAL) {
 			jobacct->tres_usage_in_max_taskid[i] =
 				(uint64_t) jobacct_id->taskid;
 			jobacct->tres_usage_in_min_taskid[i] =
@@ -317,6 +320,10 @@ static void _pack_jobacct_id(jobacct_id_t *jobacct_id,
 		pack16((uint16_t) jobacct_id->taskid, buffer);
 	} else {
 		pack32(NO_VAL, buffer);
+		/*
+		 * This pack is not used in modern code, so leave
+		 * it NO_VAL16.
+		 */
 		pack16(NO_VAL16, buffer);
 	}
 }
@@ -608,7 +615,9 @@ extern int jobacct_gather_fini(void)
 
 		if (watch_tasks_thread_id) {
 			slurm_mutex_unlock(&g_context_lock);
+			slurm_mutex_lock(&profile_timer->notify_mutex);
 			slurm_cond_signal(&profile_timer->notify);
+			slurm_mutex_unlock(&profile_timer->notify_mutex);
 			pthread_join(watch_tasks_thread_id, NULL);
 			slurm_mutex_lock(&g_context_lock);
 		}
@@ -845,11 +854,11 @@ extern void jobacct_gather_handle_mem_limit(uint64_t total_job_mem,
 
 	if (jobacct_mem_limit) {
 		if (jobacct_step_id == NO_VAL) {
-			debug("Job %u memory used:%"PRIu64" limit:%"PRIu64" KB",
+			debug("Job %u memory used:%"PRIu64" limit:%"PRIu64" B",
 			      jobacct_job_id, total_job_mem, jobacct_mem_limit);
 		} else {
 			debug("Step %u.%u memory used:%"PRIu64" "
-			      "limit:%"PRIu64" KB",
+			      "limit:%"PRIu64" B",
 			      jobacct_job_id, jobacct_step_id,
 			      total_job_mem, jobacct_mem_limit);
 		}
@@ -899,7 +908,7 @@ extern jobacctinfo_t *jobacctinfo_create(jobacct_id_t *jobacct_id)
 	jobacct = xmalloc(sizeof(struct jobacctinfo));
 
 	if (!jobacct_id) {
-		temp_id.taskid = NO_VAL16;
+		temp_id.taskid = NO_VAL;
 		temp_id.nodeid = NO_VAL;
 		jobacct_id = &temp_id;
 	}
@@ -1056,6 +1065,8 @@ extern void jobacctinfo_pack(jobacctinfo_t *jobacct,
 			     Buf buffer)
 {
 	bool no_pack;
+	uint64_t tmp_uint64;
+	double tmp_dbl;
 
 	no_pack = (!plugin_polling && (protocol_type != PROTOCOL_TYPE_DBD));
 
@@ -1114,27 +1125,94 @@ extern void jobacctinfo_pack(jobacctinfo_t *jobacct,
 		pack32((uint32_t)jobacct->user_cpu_usec, buffer);
 		pack32((uint32_t)jobacct->sys_cpu_sec, buffer);
 		pack32((uint32_t)jobacct->sys_cpu_usec, buffer);
-		pack64(jobacct->tres_usage_in_max[TRES_ARRAY_VMEM], buffer);
-		pack64(jobacct->tres_usage_in_tot[TRES_ARRAY_VMEM], buffer);
-		pack64(jobacct->tres_usage_in_max[TRES_ARRAY_MEM], buffer);
-		pack64(jobacct->tres_usage_in_tot[TRES_ARRAY_MEM], buffer);
-		pack64(jobacct->tres_usage_in_max[TRES_ARRAY_PAGES], buffer);
-		pack64(jobacct->tres_usage_in_tot[TRES_ARRAY_PAGES], buffer);
-		pack32((uint32_t)jobacct->tres_usage_in_min[TRES_ARRAY_CPU],
-		       buffer);
-		packdouble((double)jobacct->tres_usage_in_tot[TRES_ARRAY_CPU],
-			   buffer);
+
+		if ((tmp_uint64 = jobacct->tres_usage_in_max[TRES_ARRAY_VMEM])
+		    == INFINITE64)
+			tmp_uint64 = 0;
+		else
+			tmp_uint64 /= KB_ADJ;
+		pack64(tmp_uint64, buffer);
+
+		if ((tmp_uint64 = jobacct->tres_usage_in_tot[TRES_ARRAY_VMEM])
+		    == INFINITE64)
+			tmp_uint64 = 0;
+		else
+			tmp_uint64 /= KB_ADJ;
+		pack64(tmp_uint64, buffer);
+
+		if ((tmp_uint64 = jobacct->tres_usage_in_max[TRES_ARRAY_MEM])
+		    == INFINITE64)
+			tmp_uint64 = 0;
+		else
+			tmp_uint64 /= KB_ADJ;
+		pack64(tmp_uint64, buffer);
+
+		if ((tmp_uint64 = jobacct->tres_usage_in_tot[TRES_ARRAY_MEM])
+		    == INFINITE64)
+			tmp_uint64 = 0;
+		else
+			tmp_uint64 /= KB_ADJ;
+		pack64(tmp_uint64, buffer);
+
+		if ((tmp_uint64 = jobacct->tres_usage_in_max[TRES_ARRAY_PAGES])
+		    == INFINITE64)
+			tmp_uint64 = 0;
+		pack64(tmp_uint64, buffer);
+
+		if ((tmp_uint64 = jobacct->tres_usage_in_tot[TRES_ARRAY_PAGES])
+		    == INFINITE64)
+			tmp_uint64 = 0;
+		pack64(tmp_uint64, buffer);
+
+		if ((tmp_uint64 = jobacct->tres_usage_in_min[TRES_ARRAY_CPU])
+		    == INFINITE64)
+			tmp_uint64 = 0;
+		else
+			tmp_uint64 /= CPU_TIME_ADJ;
+		pack32((uint32_t)tmp_uint64, buffer);
+
+		if ((tmp_uint64 = jobacct->tres_usage_in_tot[TRES_ARRAY_CPU])
+		    == INFINITE64)
+			tmp_uint64 = 0;
+		else
+			tmp_uint64 /= CPU_TIME_ADJ;
+		packdouble((double)tmp_uint64, buffer);
+
 		pack32((uint32_t)jobacct->act_cpufreq, buffer);
 		pack64((uint64_t)jobacct->energy.consumed_energy, buffer);
 
-		packdouble((double)jobacct->tres_usage_in_max[
-				   TRES_ARRAY_FS_DISK], buffer);
-		packdouble((double)jobacct->tres_usage_in_tot[
-				   TRES_ARRAY_FS_DISK], buffer);
-		packdouble((double)jobacct->tres_usage_out_max[
-				   TRES_ARRAY_FS_DISK], buffer);
-		packdouble((double)jobacct->tres_usage_out_tot[
-				   TRES_ARRAY_FS_DISK], buffer);
+		if ((tmp_uint64 =
+		     jobacct->tres_usage_in_max[TRES_ARRAY_FS_DISK])
+		    == INFINITE64)
+			tmp_dbl = 0;
+		else
+			tmp_dbl = (double)tmp_uint64 / MB_ADJ;
+		packdouble(tmp_dbl, buffer);
+
+		if ((tmp_uint64 =
+		     jobacct->tres_usage_in_tot[TRES_ARRAY_FS_DISK])
+		    == INFINITE64)
+			tmp_dbl = 0;
+		else
+			tmp_dbl = (double)tmp_uint64 / MB_ADJ;
+		packdouble(tmp_dbl, buffer);
+
+		if ((tmp_uint64 =
+		     jobacct->tres_usage_out_max[TRES_ARRAY_FS_DISK])
+		    == INFINITE64)
+			tmp_dbl = 0;
+		else
+			tmp_dbl = (double)tmp_uint64 / MB_ADJ;
+		packdouble(tmp_dbl, buffer);
+
+		if ((tmp_uint64 =
+		     jobacct->tres_usage_out_tot[TRES_ARRAY_FS_DISK])
+		    == INFINITE64)
+			tmp_dbl = 0;
+		else
+			tmp_dbl = (double)tmp_uint64 / MB_ADJ;
+		packdouble(tmp_dbl, buffer);
+
 		jobacct_id.nodeid =
 			jobacct->tres_usage_in_max_nodeid[TRES_ARRAY_VMEM];
 		jobacct_id.taskid =

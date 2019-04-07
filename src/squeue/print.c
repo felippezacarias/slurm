@@ -1014,45 +1014,23 @@ int _print_job_priority_long(job_info_t * job, int width, bool right, char* suff
 
 int _print_job_nodes(job_info_t * job, int width, bool right, char* suffix)
 {
-	if (job == NULL) {       /* Print the Header instead */
-		char *title = "NODELIST";
-		if (params.cluster_flags & CLUSTER_FLAG_BG)
-			title = "MIDPLANELIST";
-		_print_str(title, width, right, false);
-	} else {
-		char *nodes = xstrdup(job->nodes);
-		char *ionodes = NULL;
-
-		if (nodes) {
-			select_g_select_jobinfo_get(job->select_jobinfo,
-						    SELECT_JOBDATA_IONODES,
-						    &ionodes);
-		}
-		if (ionodes) {
-			xstrfmtcat(nodes, "[%s]", ionodes);
-			xfree(ionodes);
-			_print_str(nodes, width, right, false);
-		} else
-			_print_nodes(nodes, width, right, false);
-		xfree(nodes);
-	}
+	if (job == NULL)	/* Print the Header instead */
+		_print_str("NODELIST", width, right, false);
+	else
+		_print_nodes(job->nodes, width, right, false);
 
 	if (suffix)
 		printf("%s", suffix);
+
 	return SLURM_SUCCESS;
 }
 
 int _print_job_schednodes(job_info_t * job, int width, bool right, char* suffix)
 {
-	if (job == NULL) {	/* Print the Header instead */
-		char *title = "SCHEDNODES";
-		if (params.cluster_flags & CLUSTER_FLAG_BG)
-			title = "MIDPLANELIST";
-		_print_str(title, width, right, false);
-	} else {
-		/* NOTE: BlueGene I/O node info not available */
+	if (job == NULL)	/* Print the Header instead */
+		_print_str("SCHEDNODES", width, right, false);
+	else
 		_print_str(job->sched_nodes, width, right, false);
-	}
 
 	if (suffix)
 		printf("%s", suffix);
@@ -1063,10 +1041,7 @@ int _print_job_reason_list(job_info_t * job, int width, bool right,
 		char* suffix)
 {
 	if (job == NULL) {	/* Print the Header instead */
-		char *title = "NODELIST(REASON)";
-		if (params.cluster_flags & CLUSTER_FLAG_BG)
-			title = "MIDPLANELIST(REASON)";
-		_print_str(title, width, right, false);
+		_print_str("NODELIST(REASON)", width, right, false);
 	} else if (!IS_JOB_COMPLETING(job)
 		   && (IS_JOB_PENDING(job)
 		       || IS_JOB_STAGE_OUT(job)
@@ -1082,21 +1057,9 @@ int _print_job_reason_list(job_info_t * job, int width, bool right,
 		xstrfmtcat(reason_fmt, "(%s)", reason);
 		_print_str(reason_fmt, width, right, true);
 		xfree(reason_fmt);
-	} else {
-		char *nodes = xstrdup(job->nodes);
-		char *ionodes = NULL;
+	} else
+		_print_nodes(job->nodes, width, right, false);
 
-		select_g_select_jobinfo_get(job->select_jobinfo,
-					    SELECT_JOBDATA_IONODES,
-					    &ionodes);
-		if (ionodes) {
-			xstrfmtcat(nodes, "[%s]", ionodes);
-			xfree(ionodes);
-			_print_str(nodes, width, right, false);
-		} else
-			_print_nodes(nodes, width, right, false);
-		xfree(nodes);
-	}
 	if (suffix)
 		printf("%s", suffix);
 	return SLURM_SUCCESS;
@@ -1129,13 +1092,7 @@ int _print_job_num_cpus(job_info_t * job, int width, bool right, char* suffix)
 	if (job == NULL)	/* Print the Header instead */
 		_print_str("CPUS", width, right, true);
 	else {
-		if (params.cluster_flags & CLUSTER_FLAG_BG)
-			convert_num_unit((float)job->num_cpus, tmp_char,
-					 sizeof(tmp_char), UNIT_NONE, NO_VAL,
-					 params.convert_flags);
-		else
-			snprintf(tmp_char, sizeof(tmp_char),
-				 "%u", job->num_cpus);
+		snprintf(tmp_char, sizeof(tmp_char), "%u", job->num_cpus);
        		_print_str(tmp_char, width, right, true);
 	}
 	if (suffix)
@@ -1146,27 +1103,12 @@ int _print_job_num_cpus(job_info_t * job, int width, bool right, char* suffix)
 int _print_job_num_nodes(job_info_t * job, int width, bool right_justify,
 			 char* suffix)
 {
-	uint32_t node_cnt = 0;
 	char tmp_char[8];
 
 	if (job == NULL)	/* Print the Header instead */
 		_print_str("NODES", width, right_justify, true);
 	else {
-		if (params.cluster_flags & CLUSTER_FLAG_BG)
-			select_g_select_jobinfo_get(job->select_jobinfo,
-						    SELECT_JOBDATA_NODE_CNT,
-						    &node_cnt);
-
-		if ((node_cnt == 0) || (node_cnt == NO_VAL))
-			node_cnt = job->num_nodes;
-
-		if (params.cluster_flags & CLUSTER_FLAG_BG)
-			convert_num_unit((float)node_cnt, tmp_char,
-					 sizeof(tmp_char), UNIT_NONE, NO_VAL,
-					 params.convert_flags);
-		else
-			snprintf(tmp_char, sizeof(tmp_char), "%d", node_cnt);
-
+		snprintf(tmp_char, sizeof(tmp_char), "%d", job->num_nodes);
 		_print_str(tmp_char, width, right_justify, true);
 	}
 	if (suffix)
@@ -1609,6 +1551,20 @@ int _print_job_nice(job_info_t * job, int width, bool right_justify,
 	}
 	if (suffix)
 		printf("%s", suffix);
+	return SLURM_SUCCESS;
+}
+
+int _print_job_accrue_time(job_info_t * job, int width, bool right_justify,
+			   char* suffix)
+{
+	if (job == NULL)
+		_print_str("ACCRUE_TIME", width, right_justify, true);
+	else {
+		_print_time(job->accrue_time, 0, width, right_justify);
+	}
+
+	if (suffix)
+		printf("%s",suffix);
 	return SLURM_SUCCESS;
 }
 
@@ -2182,6 +2138,8 @@ int _print_job_cpus_per_tres(job_info_t *job, int width,
 				   right_justify, true);
 
 	}
+	if (suffix)
+		printf("%s", suffix);
 	return SLURM_SUCCESS;
 }
 
@@ -2199,6 +2157,8 @@ int _print_job_mem_per_tres(job_info_t *job, int width,
 				   right_justify, true);
 
 	}
+	if (suffix)
+		printf("%s", suffix);
 	return SLURM_SUCCESS;
 }
 
@@ -2219,6 +2179,8 @@ int _print_job_tres_alloc(job_info_t *job, int width,
 				   right_justify, true);
 
 	}
+	if (suffix)
+		printf("%s", suffix);
 	return SLURM_SUCCESS;
 }
 
@@ -2236,6 +2198,8 @@ int _print_job_tres_bind(job_info_t *job, int width,
 				   right_justify, true);
 
 	}
+	if (suffix)
+		printf("%s", suffix);
 	return SLURM_SUCCESS;
 }
 
@@ -2253,6 +2217,8 @@ int _print_job_tres_freq(job_info_t *job, int width,
 				   right_justify, true);
 
 	}
+	if (suffix)
+		printf("%s", suffix);
 	return SLURM_SUCCESS;
 }
 
@@ -2270,6 +2236,8 @@ int _print_job_tres_per_job(job_info_t *job, int width,
 				   right_justify, true);
 
 	}
+	if (suffix)
+		printf("%s", suffix);
 	return SLURM_SUCCESS;
 }
 
@@ -2287,6 +2255,8 @@ int _print_job_tres_per_node(job_info_t *job, int width,
 				   right_justify, true);
 
 	}
+	if (suffix)
+		printf("%s", suffix);
 	return SLURM_SUCCESS;
 }
 
@@ -2304,6 +2274,8 @@ int _print_job_tres_per_socket(job_info_t *job, int width,
 				   right_justify, true);
 
 	}
+	if (suffix)
+		printf("%s", suffix);
 	return SLURM_SUCCESS;
 }
 
@@ -2321,6 +2293,8 @@ int _print_job_tres_per_task(job_info_t *job, int width,
 				   right_justify, true);
 
 	}
+	if (suffix)
+		printf("%s", suffix);
 	return SLURM_SUCCESS;
 }
 
@@ -2536,29 +2510,10 @@ int _print_step_name(job_step_info_t * step, int width, bool right,
 int _print_step_nodes(job_step_info_t * step, int width, bool right,
 		      char* suffix)
 {
-	if (step == NULL) {	/* Print the Header instead */
-		char *title = "NODELIST";
-		if (params.cluster_flags & CLUSTER_FLAG_BG)
-			title = "MIDPLANELIST";
-
-		_print_str(title, width, right, false);
-	} else {
-		char *nodes = xstrdup(step->nodes);
-		char *ionodes = NULL;
-
-		if (nodes) {
-			select_g_select_jobinfo_get(step->select_jobinfo,
-						    SELECT_JOBDATA_IONODES,
-						    &ionodes);
-		}
-		if (ionodes) {
-			xstrfmtcat(nodes, "[%s]", ionodes);
-			xfree(ionodes);
-			_print_str(nodes, width, right, false);
-		} else
-			_print_nodes(nodes, width, right, false);
-		xfree(nodes);
-	}
+	if (step == NULL)	/* Print the Header instead */
+		_print_str("NODELIST", width, right, false);
+	else
+		_print_nodes(step->nodes, width, right, false);
 
 	if (suffix)
 		printf("%s", suffix);

@@ -141,8 +141,6 @@ if {[file exists $spank_conf_file]} {
 
 	exec $bin_cp -f $spank_conf_file $orig_spank_conf
 	exec $bin_cp -f $spank_conf_file $new_spank_conf
-	exec $bin_chmod 700 $spank_conf_file
-	exec $bin_chmod 700 $new_spank_conf
 } else {
 	exec $bin_cp -f /dev/null $new_spank_conf
 }
@@ -324,7 +322,7 @@ if {$matches != 2} {
 #
 if {[wait_for_job $job_id "DONE"] != 0} {
 	send_user "\nFAILURE: waiting for job to complete\n"
-	[cancel_job $job_id]
+	cancel_job $job_id
 	end_it 1
 }
 

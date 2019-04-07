@@ -61,7 +61,7 @@ static pthread_mutex_t license_mutex = PTHREAD_MUTEX_INITIALIZER;
 static void _pack_license(struct licenses *lic, Buf buffer, uint16_t protocol_version);
 
 /* Print all licenses on a list */
-static inline void _licenses_print(char *header, List licenses, int job_id)
+static void _licenses_print(char *header, List licenses, struct job_record *job_ptr)
 {
 	ListIterator iter;
 	licenses_t *license_entry;
@@ -73,13 +73,13 @@ static inline void _licenses_print(char *header, List licenses, int job_id)
 
 	iter = list_iterator_create(licenses);
   	while ((license_entry = (licenses_t *) list_next(iter))) {
-		if (job_id == 0) {
+		if (!job_ptr) {
 			info("licenses: %s=%s total=%u used=%u",
 			     header, license_entry->name,
 			     license_entry->total, license_entry->used);
 		} else {
-			info("licenses: %s=%s job_id=%u available=%u used=%u",
-			     header, license_entry->name, job_id,
+			info("licenses: %s=%s %pJ available=%u used=%u",
+			     header, license_entry->name, job_ptr,
 			     license_entry->total, license_entry->used);
 		}
 	}
@@ -142,7 +142,11 @@ static List _build_license_list(char *licenses, bool *valid)
 				*valid = false;
 				break;
 			}
-			/* ':' is used as a separator in version 2.5 or later
+			/*
+			 * The '*' was still in use internally until 18.08, so
+			 * the check for '*' must stay until 20.02 at least.
+			 *
+			 * ':' is used as a separator in version 2.5 or later
 			 * '*' is used as a separator in version 2.4 or earlier
 			 */
 			if ((token[i] == ':') || (token[i] == '*')) {
@@ -178,10 +182,16 @@ static List _build_license_list(char *licenses, bool *valid)
 	return lic_list;
 }
 
-/* Given a list of license_t records, return a license string.
+/*
+ * Given a list of license_t records, return a license string.
+ *
  * This can be combined with _build_license_list() to eliminate duplicates
- * (e.g. "tux*2,tux*3" gets changed to "tux*5"). */
-static char * _build_license_string(List license_list)
+ *
+ * IN license_list - list of license_t records
+ *
+ * RET string represenation of licenses. Must be destroyed by caller.
+ */
+extern char *license_list_to_string(List license_list)
 {
 	char buf[128], *sep;
 	char *licenses = NULL;
@@ -197,7 +207,7 @@ static char * _build_license_string(List license_list)
 			sep = ",";
 		else
 			sep = "";
-		snprintf(buf, sizeof(buf), "%s%s*%u", sep, license_entry->name,
+		snprintf(buf, sizeof(buf), "%s%s:%u", sep, license_entry->name,
 			 license_entry->total);
 		xstrcat(licenses, buf);
 	}
@@ -260,7 +270,7 @@ extern int license_init(char *licenses)
 	if (!valid)
 		fatal("Invalid configured licenses: %s", licenses);
 
-	_licenses_print("init_license", license_list, 0);
+	_licenses_print("init_license", license_list, NULL);
 	slurm_mutex_unlock(&license_mutex);
 	return SLURM_SUCCESS;
 }
@@ -317,7 +327,7 @@ extern int license_update(char *licenses)
 
         FREE_NULL_LIST(license_list);
         license_list = new_list;
-        _licenses_print("update_license", license_list, 0);
+        _licenses_print("update_license", license_list, NULL);
         slurm_mutex_unlock(&license_mutex);
         return SLURM_SUCCESS;
 }
@@ -514,6 +524,10 @@ extern void license_free(void)
 /*
  * license_validate - Test if the required licenses are valid
  * IN licenses - required licenses
+ * IN validate_configured - if true, validate that there are enough configured
+ *                          licenses for the requested amount.
+ * IN validate_existing - if true, validate that licenses exist, otherwise don't
+ *                        return them in the final list.
  * OUT tres_req_cnt - appropriate counts for each requested gres,
  *                    since this only matters on pending jobs you can
  *                    send in NULL otherwise
@@ -521,7 +535,8 @@ extern void license_free(void)
  *             are configured (though not necessarily available now)
  * RET license_list, must be destroyed by caller
  */
-extern List license_validate(char *licenses,
+extern List license_validate(char *licenses, bool validate_configured,
+			     bool validate_existing,
 			     uint64_t *tres_req_cnt, bool *valid)
 {
 	ListIterator iter;
@@ -543,7 +558,7 @@ extern List license_validate(char *licenses,
 	}
 
 	slurm_mutex_lock(&license_mutex);
-	_licenses_print("request_license", job_license_list, 0);
+	_licenses_print("request_license", job_license_list, NULL);
 	iter = list_iterator_create(job_license_list);
 	while ((license_entry = (licenses_t *) list_next(iter))) {
 		if (license_list) {
@@ -555,9 +570,14 @@ extern List license_validate(char *licenses,
 		if (!match) {
 			debug("License name requested (%s) does not exist",
 			      license_entry->name);
+			if (!validate_existing) {
+				list_remove(iter);
+				continue;
+			}
 			*valid = false;
 			break;
-		} else if (license_entry->total > match->total) {
+		} else if (validate_configured &&
+			   (license_entry->total > match->total)) {
 			debug("Licenses count requested higher than configured "
 			      "(%s: %u > %u)",
 			      match->name, license_entry->total, match->total);
@@ -595,7 +615,7 @@ extern void license_job_merge(struct job_record *job_ptr)
 	FREE_NULL_LIST(job_ptr->license_list);
 	job_ptr->license_list = _build_license_list(job_ptr->licenses, &valid);
 	xfree(job_ptr->licenses);
-	job_ptr->licenses = _build_license_string(job_ptr->license_list);
+	job_ptr->licenses = license_list_to_string(job_ptr->license_list);
 }
 
 /*
@@ -709,7 +729,7 @@ extern int license_job_get(struct job_record *job_ptr)
 		}
 	}
 	list_iterator_destroy(iter);
-	_licenses_print("acquire_license", license_list, job_ptr->job_id);
+	_licenses_print("acquire_license", license_list, job_ptr);
 	slurm_mutex_unlock(&license_mutex);
 	return rc;
 }
@@ -752,7 +772,7 @@ extern int license_job_return(struct job_record *job_ptr)
 		}
 	}
 	list_iterator_destroy(iter);
-	_licenses_print("return_license", license_list, job_ptr->job_id);
+	_licenses_print("return_license", license_list, job_ptr);
 	slurm_mutex_unlock(&license_mutex);
 	return rc;
 }

@@ -2,7 +2,7 @@
  **  pmix_server.c - PMIx server side functionality
  *****************************************************************************
  *  Copyright (C) 2014-2015 Artem Polyakov. All rights reserved.
- *  Copyright (C) 2015-2017 Mellanox Technologies. All rights reserved.
+ *  Copyright (C) 2015-2018 Mellanox Technologies. All rights reserved.
  *  Written by Artem Polyakov <artpol84@gmail.com, artemp@mellanox.com>.
  *
  *  This file is part of Slurm, a resource management program.
@@ -215,7 +215,7 @@ static size_t _base_hdr_pack_full_samearch(pmixp_base_hdr_t *hdr, void *net)
 		packmem(pmixp_dconn_ep_data(), pmixp_dconn_ep_len(), buf);
 		offset += get_buf_offset(buf);
 		buf->head = NULL;
-		free_buf(buf);
+		FREE_NULL_BUFFER(buf);
 	}
 	return offset;
 }
@@ -590,7 +590,6 @@ static int _serv_read(eio_obj_t *obj, List objs)
 		return 0;
 	}
 
-	PMIXP_DEBUG("fd = %d", obj->fd);
 	pmixp_conn_t *conn = (pmixp_conn_t *)obj->arg;
 	bool proceed = true;
 
@@ -633,7 +632,7 @@ static bool _serv_writable(eio_obj_t *obj)
 	pmixp_debug_hang(0);
 
 	/* Invoke cleanup callbacks if any */
-	pmixp_io_send_cleanup(eng);
+	pmixp_io_send_cleanup(eng, PMIXP_P2P_REGULAR);
 
 	/* check if we have something to send */
 	if (pmixp_io_send_pending(eng)) {
@@ -708,7 +707,7 @@ static int _process_extended_hdr(pmixp_base_hdr_t *hdr, Buf buf)
 
 		rc = _auth_cred_create(buf_init);
 		if (rc) {
-			free_buf(init_msg->buf_ptr);
+			FREE_NULL_BUFFER(init_msg->buf_ptr);
 			xfree(init_msg);
 			goto unlock;
 		}
@@ -729,7 +728,7 @@ static int _process_extended_hdr(pmixp_base_hdr_t *hdr, Buf buf)
 		PMIXP_ERROR("Unable to connect to %d", dconn->nodeid);
 		if (init_msg) {
 			/* need to release `init_msg` here */
-			free_buf(init_msg->buf_ptr);
+			FREE_NULL_BUFFER(init_msg->buf_ptr);
 			xfree(init_msg);
 		}
 		goto unlock;
@@ -786,7 +785,7 @@ static void _process_server_request(pmixp_base_hdr_t *hdr, Buf buf)
 		pmixp_coll_type_t type = 0;
 		int c_nodeid;
 
-		rc = pmixp_coll_unpack_info(buf, &type, &c_nodeid,
+		rc = pmixp_coll_tree_unpack(buf, &type, &c_nodeid,
 					    &procs, &nprocs);
 		if (SLURM_SUCCESS != rc) {
 			char *nodename = pmixp_info_job_host(hdr->nodeid);
@@ -795,44 +794,57 @@ static void _process_server_request(pmixp_base_hdr_t *hdr, Buf buf)
 			xfree(nodename);
 			goto exit;
 		}
+		if (PMIXP_COLL_TYPE_FENCE_TREE != type) {
+			char *nodename = pmixp_info_job_host(hdr->nodeid);
+			PMIXP_ERROR("Unexpected collective type=%s from node %s, expected=%s",
+				    pmixp_coll_type2str(type), nodename,
+				    pmixp_coll_type2str(PMIXP_COLL_TYPE_FENCE_TREE));
+			xfree(nodename);
+			goto exit;
+		}
 		coll = pmixp_state_coll_get(type, procs, nprocs);
 		xfree(procs);
-
-		PMIXP_DEBUG("FENCE collective message from nodeid = %u, "
-			    "type = %s, seq = %d",
+		if (!coll) {
+			PMIXP_ERROR("Unable to pmixp_state_coll_get()");
+			break;
+		}
+		pmixp_coll_sanity_check(coll);
+#ifdef PMIXP_COLL_DEBUG
+		PMIXP_DEBUG("%s collective message from nodeid = %u, type = %s, seq = %d",
+			    pmixp_coll_type2str(type),
 			    hdr->nodeid,
 			    ((PMIXP_MSG_FAN_IN == hdr->type) ?
 				     "fan-in" : "fan-out"),
 			    hdr->seq);
-		rc = pmixp_coll_check_seq(coll, hdr->seq);
+#endif
+		rc = pmixp_coll_check(coll, hdr->seq);
 		if (PMIXP_COLL_REQ_FAILURE == rc) {
-			/* this is unexepable event: either something went
+			/* this is an unacceptable event: either something went
 			 * really wrong or the state machine is incorrect.
 			 * This will 100% lead to application hang.
 			 */
 			char *nodename = pmixp_info_job_host(hdr->nodeid);
-			PMIXP_ERROR("Bad collective seq. #%d from %s, current"
-				    " is %d",
-				    hdr->seq, nodename, coll->seq);
+			PMIXP_ERROR("Bad collective seq. #%d from %s:%u, current is %d",
+				    hdr->seq, nodename, hdr->nodeid, coll->seq);
 			pmixp_debug_hang(0); /* enable hang to debug this! */
 			slurm_kill_job_step(pmixp_info_jobid(),
 					    pmixp_info_stepid(), SIGKILL);
 			xfree(nodename);
 			break;
 		} else if (PMIXP_COLL_REQ_SKIP == rc) {
-			PMIXP_DEBUG("Wrong collective seq. #%d from"
-				    " nodeid %u, current is %d, skip "
-				    "this message",
+#ifdef PMIXP_COLL_DEBUG
+			PMIXP_DEBUG("Wrong collective seq. #%d from nodeid %u, current is %d, skip this message",
 				    hdr->seq, hdr->nodeid, coll->seq);
+#endif
 			goto exit;
 		}
 
 		if (PMIXP_MSG_FAN_IN == hdr->type) {
-			pmixp_coll_contrib_child(coll, hdr->nodeid,
-						 hdr->seq, buf);
+			pmixp_coll_tree_child(coll, hdr->nodeid,
+					      hdr->seq, buf);
 		} else {
-			pmixp_coll_contrib_parent(coll, hdr->nodeid,
-						  hdr->seq, buf);
+			pmixp_coll_tree_parent(coll, hdr->nodeid,
+					       hdr->seq, buf);
 		}
 
 		break;
@@ -876,19 +888,67 @@ static void _process_server_request(pmixp_base_hdr_t *hdr, Buf buf)
 		break;
 	}
 #endif
+	case PMIXP_MSG_RING: {
+		pmixp_coll_t *coll = NULL;
+		pmixp_proc_t *procs = NULL;
+		size_t nprocs = 0;
+		pmixp_coll_ring_msg_hdr_t ring_hdr;
+		pmixp_coll_type_t type = 0;
+
+		if (pmixp_coll_ring_unpack(buf, &type, &ring_hdr,
+					   &procs, &nprocs)) {
+			char *nodename = pmixp_info_job_host(hdr->nodeid);
+			PMIXP_ERROR("Bad message header from node %s",
+				    nodename);
+			xfree(nodename);
+			goto exit;
+		}
+		if (PMIXP_COLL_TYPE_FENCE_RING != type) {
+			char *nodename = pmixp_info_job_host(hdr->nodeid);
+			PMIXP_ERROR("Unexpected collective type=%s from node %s:%u, expected=%s",
+				   pmixp_coll_type2str(type), nodename, hdr->nodeid,
+				   pmixp_coll_type2str(PMIXP_COLL_TYPE_FENCE_RING));
+			xfree(nodename);
+			goto exit;
+		}
+
+		coll = pmixp_state_coll_get(type, procs, nprocs);
+		xfree(procs);
+		if (!coll) {
+			PMIXP_ERROR("Unable to pmixp_state_coll_get()");
+			break;
+		}
+		pmixp_coll_sanity_check(coll);
+#ifdef PMIXP_COLL_DEBUG
+		PMIXP_DEBUG("%s collective message from nodeid=%u, contrib_id=%u, seq=%u, hop=%u, msgsize=%lu",
+			    pmixp_coll_type2str(type),
+			    hdr->nodeid, ring_hdr.contrib_id,
+			    ring_hdr.seq, ring_hdr.hop_seq, ring_hdr.msgsize);
+#endif
+		if (pmixp_coll_ring_check(coll, &ring_hdr)) {
+			char *nodename = pmixp_info_job_host(hdr->nodeid);
+			PMIXP_ERROR("%p: unexpected contrib from %s:%u, coll->seq=%d, seq=%d",
+				    coll, nodename, hdr->nodeid,
+				    coll->seq, hdr->seq);
+			xfree(nodename);
+			break;
+		}
+		pmixp_coll_ring_neighbor(coll, &ring_hdr, buf);
+		break;
+	}
 	default:
 		PMIXP_ERROR("Unknown message type %d", hdr->type);
 		break;
 	}
 
 exit:
-	free_buf(buf);
+	FREE_NULL_BUFFER(buf);
 }
 
 void pmixp_server_sent_buf_cb(int rc, pmixp_p2p_ctx_t ctx, void *data)
 {
 	Buf buf = (Buf)data;
-	free_buf(buf);
+	FREE_NULL_BUFFER(buf);
 	return;
 }
 
@@ -988,7 +1048,7 @@ static int _direct_hdr_unpack_portable(void *net, void *host)
 
 	/* free the Buf packbuf, but not the memory it points to */
 	packbuf->head = NULL;
-	free_buf(packbuf);
+	FREE_NULL_BUFFER(packbuf);
 	return 0;
 }
 
@@ -1010,7 +1070,7 @@ static size_t _direct_hdr_pack_portable(pmixp_base_hdr_t *hdr, void *net)
 	xassert(size <= PMIXP_BASE_HDR_MAX);
 	/* free the Buf packbuf, but not the memory it points to */
 	buf->head = NULL;
-	free_buf(buf);
+	FREE_NULL_BUFFER(buf);
 	return size;
 }
 
@@ -1113,7 +1173,7 @@ _direct_conn_establish(pmixp_conn_t *conn, void *_hdr, void *msg)
 	/* Retrieve endpoint information */
 	rc = _base_hdr_unpack_ext(buf_msg, &ep_data, &ep_len);
 	if (rc) {
-		free_buf(buf_msg);
+		FREE_NULL_BUFFER(buf_msg);
 		close(fd);
 		nodename = pmixp_info_job_host(hdr->nodeid);
 		PMIXP_ERROR("Failed to unpack the direct connection message from %u(%s)",
@@ -1123,7 +1183,7 @@ _direct_conn_establish(pmixp_conn_t *conn, void *_hdr, void *msg)
 	}
 	/* Unpack and verify the auth credential */
 	rc = _auth_cred_verify(buf_msg);
-	free_buf(buf_msg);
+	FREE_NULL_BUFFER(buf_msg);
 	if (rc) {
 		close(fd);
 		nodename = pmixp_info_job_host(hdr->nodeid);
@@ -1214,6 +1274,68 @@ _direct_send(pmixp_dconn_t *dconn, pmixp_ep_t *ep,
 	}
 }
 
+int pmixp_server_direct_conn_early(void)
+{
+	pmixp_coll_type_t types[] = { PMIXP_COLL_TYPE_FENCE_TREE, PMIXP_COLL_TYPE_FENCE_RING };
+	pmixp_coll_type_t type = pmixp_info_srv_fence_coll_type();
+	pmixp_coll_t *coll[PMIXP_COLL_TYPE_FENCE_MAX] = { NULL };
+	int i, rc, count = 0;
+	pmixp_proc_t proc;
+
+	PMIXP_DEBUG("called");
+	proc.rank = pmixp_lib_get_wildcard();
+	strncpy(proc.nspace, _pmixp_job_info.nspace, PMIXP_MAX_NSLEN);
+
+	for (i=0; i < sizeof(types)/sizeof(types[0]); i++){
+		if (type != PMIXP_COLL_TYPE_FENCE_MAX && type != types[i]) {
+			continue;
+		}
+		coll[count++] = pmixp_state_coll_get(types[i], &proc, 1);
+	}
+	/* use Tree algo by defaut */
+	if (!count) {
+		coll[count++] = pmixp_state_coll_get(PMIXP_COLL_TYPE_FENCE_TREE, &proc, 1);
+	}
+	for (i = 0; i < count; i++) {
+		if (coll[i]) {
+			pmixp_ep_t ep = {0};
+			Buf buf;
+
+			ep.type = PMIXP_EP_NOIDEID;
+
+			switch (coll[i]->type) {
+			case PMIXP_COLL_TYPE_FENCE_TREE:
+				ep.ep.nodeid = coll[i]->state.tree.prnt_peerid;
+				if (ep.ep.nodeid < 0) {
+					/* this is the root node, it has no
+					 * the parent node to early connect */
+					continue;
+				}
+				break;
+			case PMIXP_COLL_TYPE_FENCE_RING:
+				/* calculate the id of the next ring neighbor */
+				ep.ep.nodeid = (coll[i]->my_peerid + 1) %
+						coll[i]->peers_cnt;
+				break;
+			default:
+				PMIXP_ERROR("Unknown coll type");
+				return SLURM_ERROR;
+			}
+
+			buf = pmixp_server_buf_new();
+			rc = pmixp_server_send_nb(
+				&ep, PMIXP_MSG_INIT_DIRECT, coll[i]->seq,
+				buf, pmixp_server_sent_buf_cb, buf);
+
+			if (SLURM_SUCCESS != rc) {
+				PMIXP_ERROR_STD("send init msg error");
+				return SLURM_ERROR;
+			}
+		}
+	}
+	return SLURM_SUCCESS;
+}
+
 /*
  * ------------------- Slurm communication protocol -----------------------
  */
@@ -1297,7 +1419,7 @@ static int _slurm_pack_hdr(pmixp_base_hdr_t *hdr, void *net)
 	size = get_buf_offset(buf);
 	/* free the Buf packbuf, but not the memory it points to */
 	buf->head = NULL;
-	free_buf(buf);
+	FREE_NULL_BUFFER(buf);
 	return size;
 }
 
@@ -1315,7 +1437,7 @@ static int _slurm_proto_unpack_hdr(void *net, void *host)
 	}
 	/* free the Buf packbuf, but not the memory it points to */
 	packbuf->head = NULL;
-	free_buf(packbuf);
+	FREE_NULL_BUFFER(packbuf);
 
 	return 0;
 }
@@ -1346,8 +1468,14 @@ static int _slurm_send(pmixp_ep_t *ep, pmixp_base_hdr_t bhdr, Buf buf)
 		break;
 	case PMIXP_EP_NOIDEID: {
 		char *nodename = pmixp_info_job_host(ep->ep.nodeid);
-		rc = pmixp_p2p_send(nodename, addr, data, dsize,
+		char *address = xstrdup(addr);
+
+		xstrsubstitute(address, "%n", nodename);
+		xstrsubstitute(address, "%h", nodename);
+
+		rc = pmixp_p2p_send(nodename, address, data, dsize,
 				    500, 7, 0);
+		xfree(address);
 		xfree(nodename);
 		break;
 	}
@@ -1597,7 +1725,7 @@ struct pp_cbdata
 void pingpong_complete(int rc, pmixp_p2p_ctx_t ctx, void *data)
 {
 	struct pp_cbdata *d = (struct pp_cbdata*)data;
-	free_buf(d->buf);
+	FREE_NULL_BUFFER(d->buf);
 	xfree(data);
 	//    PMIXP_ERROR("Send complete: %d %lf", d->size, GET_TS - d->start);
 }
@@ -1704,23 +1832,14 @@ void pmixp_server_init_cperf(char ***env)
 	}
 }
 
-bool pmixp_server_want_cperf()
+bool pmixp_server_want_cperf(void)
 {
 	return _pmixp_cperf_on;
 }
 
-static void _pmixp_cperf_cbfunc(int status,
-				const char *data, size_t ndata,
-				void *cbdata,
-				void *r_fn,
-				void *r_cbdata)
+inline static void _pmixp_cperf_cbfunc(pmixp_coll_t *coll,
+				       void *r_fn, void *r_cbdata)
 {
-	/* small violation - we kinow what is the type of release
-	 * data and will use that knowledge to avoid the deadlock
-	 */
-	pmixp_coll_t *coll = pmixp_coll_from_cbdata(r_cbdata);
-	xassert(SLURM_SUCCESS == status);
-
 	/*
 	 * we will be called with mutex locked.
 	 * need to unlock it so that callback won't
@@ -1738,24 +1857,64 @@ static void _pmixp_cperf_cbfunc(int status,
 	_pmixp_server_cperf_inc();
 }
 
+static void _pmixp_cperf_tree_cbfunc(int status, const char *data,
+				     size_t ndata, void *cbdata,
+				     void *r_fn, void *r_cbdata)
+{
+	/* small violation - we kinow what is the type of release
+	 * data and will use that knowledge to avoid the deadlock
+	 */
+	pmixp_coll_t *coll = pmixp_coll_tree_from_cbdata(r_cbdata);
+	xassert(SLURM_SUCCESS == status);
+	_pmixp_cperf_cbfunc(coll, r_fn, r_cbdata);
+}
 
-static int _pmixp_server_cperf_iter(char *data, int ndata)
+static void _pmixp_cperf_ring_cbfunc(int status, const char *data,
+				     size_t ndata, void *cbdata,
+				     void *r_fn, void *r_cbdata)
+{
+	/* small violation - we kinow what is the type of release
+	 * data and will use that knowledge to avoid the deadlock
+	 */
+	pmixp_coll_t *coll = pmixp_coll_ring_from_cbdata(r_cbdata);
+	xassert(SLURM_SUCCESS == status);
+	_pmixp_cperf_cbfunc(coll, r_fn, r_cbdata);
+}
+
+typedef void (*pmixp_cperf_cbfunc_fn_t)(int status, const char *data,
+					size_t ndata, void *cbdata,
+					void *r_fn, void *r_cbdata);
+
+static int _pmixp_server_cperf_iter(pmixp_coll_type_t type, char *data, int ndata)
 {
 	pmixp_coll_t *coll;
 	pmixp_proc_t procs;
 	int cur_count = _pmixp_server_cperf_count();
+	pmixp_cperf_cbfunc_fn_t cperf_cbfunc = _pmixp_cperf_tree_cbfunc;
 
 	strncpy(procs.nspace, pmixp_info_namespace(), PMIXP_MAX_NSLEN);
 	procs.rank = pmixp_lib_get_wildcard();
 
-	coll = pmixp_state_coll_get(PMIXP_COLL_TYPE_FENCE, &procs, 1);
-	xassert(!pmixp_coll_contrib_local(coll, data, ndata,
-					  _pmixp_cperf_cbfunc, NULL));
+	switch (type) {
+	case PMIXP_COLL_TYPE_FENCE_RING:
+		cperf_cbfunc = _pmixp_cperf_ring_cbfunc;
+		break;
+	case PMIXP_COLL_TYPE_FENCE_TREE:
+		cperf_cbfunc = _pmixp_cperf_tree_cbfunc;
+		break;
+	default:
+		PMIXP_ERROR("Uncnown coll type");
+		return SLURM_ERROR;
+	}
+	coll = pmixp_state_coll_get(type, &procs, 1);
+	pmixp_coll_sanity_check(coll);
+	xassert(!pmixp_coll_contrib_local(coll, type, data, ndata,
+					  cperf_cbfunc, NULL));
 
 	while (cur_count == _pmixp_server_cperf_count()) {
 		usleep(1);
 	}
-	return 0;
+	return SLURM_SUCCESS;
 }
 
 /*
@@ -1766,17 +1925,30 @@ static int _pmixp_server_cperf_iter(char *data, int ndata)
  * In this case communication exchange will be done between
  * the first two nodes.
  */
-void pmixp_server_run_cperf()
+void pmixp_server_run_cperf(void)
 {
 	int size;
 	size_t start, end, bound;
+	pmixp_coll_type_t type;
+	pmixp_coll_type_t types[] = { PMIXP_COLL_TYPE_FENCE_TREE, PMIXP_COLL_TYPE_FENCE_RING };
+	pmixp_coll_cperf_mode_t mode = pmixp_info_srv_fence_coll_type();
+	bool is_barrier = pmixp_info_srv_fence_coll_barrier();
+
+	int rc = SLURM_SUCCESS;
 
 	pmixp_debug_hang(0);
 
-	start = 1 << _pmixp_cperf_low;
-	end = 1 << _pmixp_cperf_up;
-	bound = 1 << _pmixp_cperf_bound;
+	if (!is_barrier) {
+		start = 1 << _pmixp_cperf_low;
+		end = 1 << _pmixp_cperf_up;
+		bound = 1 << _pmixp_cperf_bound;
+	} else {
+		start = 0;
+		end = 1;
+		bound = 1;
+	}
 
+	PMIXP_ERROR("coll perf mode=%s", pmixp_coll_cperf_mode2str(mode));
 	for (size = start; size <= end; size *= 2) {
 		int j, iters = _pmixp_cperf_siter;
 		struct timeval tv1, tv2;
@@ -1788,9 +1960,24 @@ void pmixp_server_run_cperf()
 
 		PMIXP_ERROR("coll perf %d", size);
 
-		for(j=0; j<iters; j++){
+		bzero(times, (sizeof(double) * iters));
+		for(j=0; j<iters && !rc; j++){
+			switch (mode) {
+			case PMIXP_COLL_CPERF_MIXED:
+				type = types[j%(sizeof(types)/sizeof(types[0]))];
+				break;
+			case PMIXP_COLL_CPERF_RING:
+				type = PMIXP_COLL_TYPE_FENCE_RING;
+				break;
+			case PMIXP_COLL_CPERF_TREE:
+				type = PMIXP_COLL_TYPE_FENCE_TREE;
+				break;
+			default:
+				type = PMIXP_COLL_TYPE_FENCE_RING;
+				break;
+			}
 			gettimeofday(&tv1, NULL);
-			_pmixp_server_cperf_iter(data, size);
+			rc = _pmixp_server_cperf_iter(type, data, size);
 			gettimeofday(&tv2, NULL);
 			times[j] = tv2.tv_sec + 1E-6 * tv2.tv_usec -
 					(tv1.tv_sec + 1E-6 * tv1.tv_usec);
@@ -1801,7 +1988,10 @@ void pmixp_server_run_cperf()
 			PMIXP_ERROR("\t%d %d: %.9lf", j, size, times[j]);
 		}
 		xfree(data);
+		if (is_barrier) {
+			break;
+		}
 	}
 }
 
-#endif
+#endif // NDEBUG

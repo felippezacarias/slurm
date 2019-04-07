@@ -118,6 +118,7 @@ static int _print_stats(void)
 
 	printf("Server thread count:  %d\n", buf->server_thread_count);
 	printf("Agent queue size:     %d\n", buf->agent_queue_size);
+	printf("Agent count:          %d\n", buf->agent_count);
 	printf("DBD Agent queue size: %d\n\n", buf->dbd_agent_queue_size);
 
 	printf("Jobs submitted: %d\n", buf->jobs_submitted);
@@ -183,7 +184,7 @@ static int _print_stats(void)
 		       buf->bf_queue_len_sum / buf->bf_cycle_counter);
 	}
 
-	printf("\nLatency for gettimeofday() (x1000): %d nanoseconds\n",
+	printf("\nLatency for gettimeofday() (x1000): %d microseconds\n",
 	       buf->gettimeofday_latency);
 
 	printf("\nRemote Procedure Call statistics by message type\n");
@@ -202,6 +203,27 @@ static int _print_stats(void)
 		       uid_to_string_cached((uid_t)buf->rpc_user_id[i]),
 		       buf->rpc_user_id[i], buf->rpc_user_cnt[i],
 		       rpc_user_ave_time[i], buf->rpc_user_time[i]);
+	}
+
+	printf("\nPending RPC statistics\n");
+	if (buf->rpc_queue_type_count == 0)
+		printf("\tNo pending RPCs\n");
+	for (i = 0; i < buf->rpc_queue_type_count; i++){
+		printf("\t%-40s(%5u) count:%-6u\n",
+		       rpc_num2string(buf->rpc_queue_type_id[i]),
+		       buf->rpc_queue_type_id[i],
+		       buf->rpc_queue_count[i]);
+	}
+
+	if (buf->rpc_dump_count > 0) {
+		printf("\nPending RPCs\n");
+	}
+
+	for (i = 0; i < buf->rpc_dump_count; i++) {
+		printf("\t%2u: %-36s %s\n",
+		       i+1,
+		       rpc_num2string(buf->rpc_dump_types[i]),
+		       buf->rpc_dump_hostlist[i]);
 	}
 
 	return 0;

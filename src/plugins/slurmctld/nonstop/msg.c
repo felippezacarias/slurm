@@ -58,7 +58,7 @@
 
 /* This version string is defined at configure time of libsmd. The
  * META of libsmd needs to reflect this version. */
-char *version_string = "VERSION:17.11";
+char *version_string = "VERSION:18.08";
 
 /* When a remote socket closes on AIX, we have seen poll() return EAGAIN
  * indefinitely for a pending write request. Rather than locking up
@@ -342,7 +342,7 @@ static void *_msg_thread(void *no_data)
 	}
 	debug("slurmctld/nonstop: message engine shutdown");
 	if (sock_fd > 0)
-		(void) slurm_shutdown_msg_engine(sock_fd);
+		close(sock_fd);
 	pthread_exit((void *) 0);
 	return NULL;
 }

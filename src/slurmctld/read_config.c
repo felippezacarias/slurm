@@ -42,7 +42,6 @@
 
 #include <ctype.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -71,6 +70,7 @@
 #include "src/common/strnatcmp.h"
 #include "src/common/switch.h"
 #include "src/common/xstring.h"
+#include "src/common/xcgroup_read_config.h"
 
 #include "src/slurmctld/acct_policy.h"
 #include "src/slurmctld/burst_buffer.h"
@@ -141,6 +141,27 @@ static void _sync_nodes_to_suspended_job(struct job_record *job_ptr);
 static void _sync_part_prio(void);
 static int  _update_preempt(uint16_t old_enable_preempt);
 
+
+/*
+ * Setup the global response_cluster_rec
+ */
+static void _set_response_cluster_rec()
+{
+	if (response_cluster_rec)
+		return;
+
+	response_cluster_rec = xmalloc(sizeof(slurmdb_cluster_rec_t));
+	response_cluster_rec->name = xstrdup(slurmctld_conf.cluster_name);
+	if (slurmctld_conf.slurmctld_addr) {
+		response_cluster_rec->control_host =
+			xstrdup(slurmctld_conf.slurmctld_addr);
+	} else {
+		response_cluster_rec->control_host =
+			xstrdup(slurmctld_conf.control_addr[0]);
+	}
+	response_cluster_rec->control_port = slurmctld_conf.slurmctld_port;
+	response_cluster_rec->rpc_version = SLURM_PROTOCOL_VERSION;
+}
 
 /* Verify that Slurm directories are secure, not world writable */
 static void _stat_slurm_dirs(void)
@@ -315,6 +336,57 @@ static int _set_share_node_bitmap(void *x, void *arg)
 
 	return 0;
 }
+
+/*
+ * _set_slurmd_addr - establish the slurm_addr_t for the slurmd on each node
+ *	Uses common data structures.
+ */
+static void _set_slurmd_addr(void)
+{
+#ifndef HAVE_FRONT_END
+	int i;
+	struct node_record *node_ptr = node_record_table_ptr;
+	DEF_TIMERS;
+
+	xassert(verify_lock(CONF_LOCK, READ_LOCK));
+
+	START_TIMER;
+	for (i = 0; i < node_record_count; i++, node_ptr++) {
+		if ((node_ptr->name == NULL) ||
+		    (node_ptr->name[0] == '\0'))
+			continue;
+		if (IS_NODE_FUTURE(node_ptr))
+			continue;
+		if (IS_NODE_CLOUD(node_ptr)) {
+                    if (slurmctld_conf.suspend_time < 1 ||
+                        slurmctld_conf.resume_program == NULL ||
+                        slurmctld_conf.suspend_program == NULL)
+                            error("%s: Node %s configured with CLOUD state but "
+                                  "missing any of SuspendTime, SuspendProgram "
+                                  "or ResumeProgram options",__func__,
+				  node_ptr->name);
+		    if (IS_NODE_POWER_SAVE(node_ptr))
+			continue;
+		}
+		if (node_ptr->port == 0)
+			node_ptr->port = slurmctld_conf.slurmd_port;
+		slurm_set_addr(&node_ptr->slurm_addr, node_ptr->port,
+			       node_ptr->comm_name);
+		if (node_ptr->slurm_addr.sin_port)
+			continue;
+		error("%s: failure on %s", __func__, node_ptr->comm_name);
+		node_ptr->node_state = NODE_STATE_FUTURE;
+		node_ptr->port = 0;
+		xfree(node_ptr->reason);
+		node_ptr->reason = xstrdup("NO NETWORK ADDRESS FOUND");
+		node_ptr->reason_time = time(NULL);
+		node_ptr->reason_uid = slurmctld_conf.slurm_user_id;
+	}
+
+	END_TIMER2("_set_slurmd_addr");
+#endif
+}
+
 /*
  * _build_bitmaps - build node bitmaps to define which nodes are in which
  *    1) partition  2) configuration record  3) up state  4) idle state
@@ -335,6 +407,7 @@ static int _build_bitmaps(void)
 
 	/* initialize the idle and up bitmaps */
 	FREE_NULL_BITMAP(avail_node_bitmap);
+	FREE_NULL_BITMAP(bf_ignore_node_bitmap);
 	FREE_NULL_BITMAP(booting_node_bitmap);
 	FREE_NULL_BITMAP(cg_node_bitmap);
 	FREE_NULL_BITMAP(future_node_bitmap);
@@ -342,7 +415,9 @@ static int _build_bitmaps(void)
 	FREE_NULL_BITMAP(power_node_bitmap);
 	FREE_NULL_BITMAP(share_node_bitmap);
 	FREE_NULL_BITMAP(up_node_bitmap);
+	FREE_NULL_BITMAP(rs_node_bitmap);
 	avail_node_bitmap = (bitstr_t *) bit_alloc(node_record_count);
+	bf_ignore_node_bitmap = bit_alloc(node_record_count);
 	booting_node_bitmap = (bitstr_t *) bit_alloc(node_record_count);
 	cg_node_bitmap    = (bitstr_t *) bit_alloc(node_record_count);
 	future_node_bitmap = (bitstr_t *) bit_alloc(node_record_count);
@@ -350,6 +425,7 @@ static int _build_bitmaps(void)
 	power_node_bitmap = (bitstr_t *) bit_alloc(node_record_count);
 	share_node_bitmap = (bitstr_t *) bit_alloc(node_record_count);
 	up_node_bitmap    = (bitstr_t *) bit_alloc(node_record_count);
+	rs_node_bitmap    = (bitstr_t *) bit_alloc(node_record_count);
 
 	/* Set all bits, all nodes initially available for sharing */
 	bit_set_all(share_node_bitmap);
@@ -376,16 +452,23 @@ static int _build_bitmaps(void)
 			bit_set(booting_node_bitmap, i);
 		if (IS_NODE_COMPLETING(node_ptr))
 			bit_set(cg_node_bitmap, i);
-		if (IS_NODE_IDLE(node_ptr) || IS_NODE_ALLOCATED(node_ptr)) {
+		if (IS_NODE_IDLE(node_ptr) ||
+		    IS_NODE_ALLOCATED(node_ptr) ||
+		    (IS_NODE_REBOOT(node_ptr) &&
+		     (node_ptr->next_state == NODE_RESUME))) {
 			if ((drain_flag == 0) &&
 			    (!IS_NODE_NO_RESPOND(node_ptr)))
-				bit_set(avail_node_bitmap, i);
+				make_node_avail(i);
 			bit_set(up_node_bitmap, i);
 		}
 		if (IS_NODE_POWER_SAVE(node_ptr))
 			bit_set(power_node_bitmap, i);
 		if (IS_NODE_FUTURE(node_ptr))
 			bit_set(future_node_bitmap, i);
+
+		if (IS_NODE_REBOOT(node_ptr) &&
+		    (node_ptr->next_state == NODE_RESUME))
+			bit_set(rs_node_bitmap, i);
 	}
 
 	return error_code;
@@ -502,29 +585,6 @@ static int _build_all_nodeline_info(void)
 	rc = build_all_nodeline_info(false, slurmctld_tres_cnt);
 	rc2 = build_all_frontend_info(false);
 	rc = MAX(rc, rc2);
-
-	/* Now perform operations on the node table as needed by slurmctld */
-#ifdef HAVE_BG
-{
-	char *node_000 = NULL;
-	struct node_record *node_rec = NULL;
-	if (slurmctld_conf.node_prefix)
-		node_000 = xstrdup(slurmctld_conf.node_prefix);
-#if (SYSTEM_DIMENSIONS == 3)
-	xstrcat(node_000, "000");
-#endif
-#if (SYSTEM_DIMENSIONS == 4)
-	xstrcat(node_000, "0000");
-#endif
-#if (SYSTEM_DIMENSIONS == 5)
-	xstrcat(node_000, "00000");
-#endif
-	node_rec = find_node_record(node_000);
-	if (node_rec == NULL)
-		info("WARNING: No node %s configured", node_000);
-	xfree(node_000);
-}
-#endif	/* HAVE_BG */
 
 	return rc;
 }
@@ -914,8 +974,7 @@ static int _test_pack_used(void *x, void *arg)
 	if (job_ptr->bit_flags & JOB_PACK_FLAG)
 		return 0;
 
-	error("Incomplete pack job being aborted %u+%u (%u)",
-	      job_ptr->pack_job_id, job_ptr->pack_job_offset, job_ptr->job_id);
+	error("Incomplete hetjob being aborted %pJ", job_ptr);
 	_abort_job(job_ptr, JOB_FAILED, FAIL_SYSTEM, "incomplete pack_job");
 
 	return 0;
@@ -948,8 +1007,8 @@ static void _validate_pack_jobs(void)
 		hs = hostset_create(job_id_str);
 		xfree(job_id_str);
 		if (!hs) {
-			error("Job %u has invalid pack_job_id_set(%s)",
-			      job_ptr->job_id, job_ptr->pack_job_id_set);
+			error("%pJ has invalid pack_job_id_set(%s)",
+			      job_ptr, job_ptr->pack_job_id_set);
 			_abort_job(job_ptr, JOB_FAILED, FAIL_SYSTEM,
 				   "invalid pack_job_id_set");
 			continue;
@@ -960,12 +1019,12 @@ static void _validate_pack_jobs(void)
 			job_id = (uint32_t) strtoll(job_id_str, NULL, 10);
 			pack_job_ptr = find_job_record(job_id);
 			if (!pack_job_ptr) {
-				error("Could not find job %u, part of pack job %u",
+				error("Could not find JobId=%u, part of pack JobId=%u",
 				      job_id, job_ptr->job_id);
 				pack_job_valid = false;
 			} else if (pack_job_ptr->pack_job_id !=
 				   job_ptr->job_id) {
-				error("Invalid state of job %u, part of pack job %u",
+				error("Invalid state of JobId=%u, part of pack JobId=%u",
 				      job_id, job_ptr->job_id);
 				pack_job_valid = false;
 			} else {
@@ -1021,6 +1080,11 @@ int read_slurm_conf(int recover, bool reconfig)
 	char *state_save_dir      = xstrdup(slurmctld_conf.state_save_location);
 	char *mpi_params;
 	uint16_t old_select_type_p = slurmctld_conf.select_type_param;
+	char *tok, *save_ptr = NULL;
+	bool over_memory_kill = false;
+	bool cgroup_mem_confinement= false;
+	char *task_plugin_type = NULL;
+	slurm_cgroup_conf_t slurm_cgroup_conf;
 
 	/* initialization */
 	START_TIMER;
@@ -1063,6 +1127,41 @@ int read_slurm_conf(int recover, bool reconfig)
 		part_list = old_part_list;
 		default_part_name = old_def_part_name;
 		return error_code;
+	}
+
+	if (slurmctld_conf.job_acct_gather_params) {
+		tok = strtok_r(slurmctld_conf.job_acct_gather_params,
+			       ",", &save_ptr);
+		while(tok) {
+			if (xstrcasecmp(tok, "OverMemoryKill") == 0) {
+				over_memory_kill = true;
+				break;
+			}
+			tok = strtok_r(NULL, ",", &save_ptr);
+		}
+	}
+
+	memset(&slurm_cgroup_conf, 0, sizeof(slurm_cgroup_conf_t));
+	if (!read_slurm_cgroup_conf(&slurm_cgroup_conf)) {
+		task_plugin_type = slurm_get_task_plugin();
+
+		if ((slurm_cgroup_conf.constrain_ram_space ||
+		     slurm_cgroup_conf.constrain_swap_space) &&
+		    strstr(task_plugin_type, "cgroup"))
+			cgroup_mem_confinement = true;
+
+		xfree(task_plugin_type);
+		free_slurm_cgroup_conf(&slurm_cgroup_conf);
+	}
+
+	if (slurmctld_conf.mem_limit_enforce || over_memory_kill) {
+		if (cgroup_mem_confinement)
+			fatal("Incompatible memory enforcement mechanisms task/cgroup and JobAcctGather are set. You must disable one of them.");
+		else
+			info("Memory enforcing by using JobAcctGather's mechanism is discouraged, task/cgroup is recommended where available.");
+	} else {
+		if (!cgroup_mem_confinement)
+			info("No memory enforcing mechanism configured.");
 	}
 
 	if (layouts_init() != SLURM_SUCCESS) {
@@ -1164,7 +1263,7 @@ int read_slurm_conf(int recover, bool reconfig)
 	cpu_freq_reconfig();
 
 	rehash_jobs();
-	set_slurmd_addr();
+	_set_slurmd_addr();
 
 	_stat_slurm_dirs();
 
@@ -1182,6 +1281,10 @@ int read_slurm_conf(int recover, bool reconfig)
 		}
 	}
 
+	/*
+	 * Set standard features and preserve the plugin controlled ones.
+	 * A reconfig always imply load the state from slurm.conf
+	 */
 	if (reconfig) {		/* Preserve state from memory */
 		if (old_node_table_ptr) {
 			info("restoring original state of nodes");
@@ -1210,16 +1313,22 @@ int read_slurm_conf(int recover, bool reconfig)
 		reset_first_job_id();
 		(void) slurm_sched_g_reconfig();
 	} else if (recover == 0) {	/* Build everything from slurm.conf */
+		_set_features(node_record_table_ptr, node_record_count,
+			      recover);
 		load_last_job_id();
 		reset_first_job_id();
 		(void) slurm_sched_g_reconfig();
 	} else if (recover == 1) {	/* Load job & node state files */
 		(void) load_all_node_state(true);
+		_set_features(node_record_table_ptr, node_record_count,
+			      recover);
 		(void) load_all_front_end_state(true);
 		load_job_ret = load_all_job_state();
 		sync_job_priorities();
 	} else if (recover > 1) {	/* Load node, part & job state files */
 		(void) load_all_node_state(false);
+		_set_features(old_node_table_ptr, old_node_record_count,
+			      recover);
 		(void) load_all_front_end_state(false);
 		(void) load_all_part_state();
 		load_job_ret = load_all_job_state();
@@ -1268,11 +1377,6 @@ int read_slurm_conf(int recover, bool reconfig)
 
 	init_requeue_policy();
 
-	if (!reconfig && recover < 2) {
-		_set_features(node_record_table_ptr, node_record_count,
-			      recover);
-	}
-
 	/* NOTE: Run restore_node_features before _restore_job_dependencies */
 	restore_node_features(recover);
 
@@ -1295,7 +1399,8 @@ int read_slurm_conf(int recover, bool reconfig)
 		}
 	}
 
-	if (node_features_g_count() == 0)
+	/* Active and available features can be different on -R */
+	if ((node_features_g_count() == 0) && (recover != 2))
 		build_feature_list_eq();
 	else
 		build_feature_list_ne();
@@ -1382,6 +1487,8 @@ int read_slurm_conf(int recover, bool reconfig)
 	select_g_reconfigure();
 	if (reconfig && (slurm_mcs_reconfig() != SLURM_SUCCESS))
 		fatal("Failed to reconfigure mcs plugin");
+
+	_set_response_cluster_rec();
 
 	slurmctld_conf.last_update = time(NULL);
 	END_TIMER2("read_slurm_conf");
@@ -1623,7 +1730,7 @@ static void _gres_reconfig(bool reconfig)
 	struct node_record *node_ptr;
 	char *gres_name;
 	bool gres_changed;
-	int i;
+	int i, total_threads, total_cores;
 
 	if (reconfig) {
 		gres_plugin_reconfig(&gres_changed);
@@ -1636,24 +1743,44 @@ static void _gres_reconfig(bool reconfig)
 				gres_name = node_ptr->config_ptr->gres;
 			gres_plugin_init_node_config(node_ptr->name, gres_name,
 						     &node_ptr->gres_list);
+			if (!IS_NODE_CLOUD(node_ptr))
+				continue;
+
+			/*
+			 * Load in gres for node now. By default Slurm gets this
+			 * information when the node registers for the first
+			 * time, which can take a while for a node in the cloud
+			 * to boot.
+			 */
+			gres_plugin_node_config_load(
+				node_ptr->config_ptr->cpus, node_ptr->name,
+				NULL);
+			total_cores = node_ptr->config_ptr->sockets *
+				node_ptr->config_ptr->cores;
+			total_threads = total_cores *
+				node_ptr->config_ptr->threads;
+			gres_plugin_node_config_validate(
+				node_ptr->name, node_ptr->config_ptr->gres,
+				&node_ptr->gres, &node_ptr->gres_list,
+				total_threads, total_cores,
+				slurmctld_conf.fast_schedule, NULL);
 		}
 	}
 }
 /*
- * Configure node features based on old records if we are in a reconfig,
- * or from slurm.conf if we are starting slurmctld and reading config.
- * If recover is 2, we will just copy what we had previously.
- * old_node_table_ptr IN - Previous nodes information
- * old_node_record_count IN - Count of previous nodes information
- * recover IN - replace node features data with latest available information
- *              depending upon value.
+ * Configure node features.
+ * IN old_node_table_ptr IN - Previous nodes information
+ * IN old_node_record_count IN - Count of previous nodes information
+ * IN recover - replace node features data depending upon value.
+ *              0, 1 - use data from config record, built using slurm.conf
+ *              2 = use data from node record, built from saved state
  */
 static void _set_features(struct node_record *old_node_table_ptr,
 			  int old_node_record_count, int recover)
 {
 	struct node_record *node_ptr, *old_node_ptr;
 	char *tmp, *tok, *sep;
-	int i;
+	int i, node_features_cnt = node_features_g_count();
 
 	for (i = 0, old_node_ptr = old_node_table_ptr;
 	     i < old_node_record_count;
@@ -1664,39 +1791,28 @@ static void _set_features(struct node_record *old_node_table_ptr,
 		if (node_ptr == NULL)
 			continue;
 
-		xfree(node_ptr->features);
-		xfree(node_ptr->features_act);
-
-		/* Copy slurm.conf features to this node_ptr */
-		node_ptr->features = xstrdup(node_ptr->config_ptr->feature);
-
-		if (node_features_g_count() == 0) {
-			node_ptr->features_act = xstrdup(node_ptr->features);
+		/*
+		 * Load all from state, ignore what has been read from
+		 * slurm.conf. Features in node record just a placeholder
+		 * for restore_node_features() to set up new config records.
+		 */
+		if (recover == 2) {
+			xfree(node_ptr->features);
+			xfree(node_ptr->features_act);
+			node_ptr->features = old_node_ptr->features;
+			node_ptr->features_act = old_node_ptr->features_act;
+			old_node_ptr->features = NULL;
+			old_node_ptr->features_act = NULL;
 			continue;
 		}
 
-		/* If we are here, there's a node_features plugin active */
+		xfree(node_ptr->features_act);
+		node_ptr->features_act = xstrdup(node_ptr->features);
 
-		/*
-		 * The subset of non-plugin-controlled features available found
-		 * in slurm.conf for this node are copied into features_act.
-		 * This does a reset of the active features for this node.
-		 */
-		if (node_ptr->features != NULL) {
-			char *save_ptr = NULL;
-			sep = "";
-			tmp = xstrdup(node_ptr->features);
-			tok = strtok_r(tmp, ",", &save_ptr);
-			while (tok) {
-				if (!node_features_g_changeable_feature(tok)) {
-					xstrfmtcat(node_ptr->features_act,
-						   "%s%s", sep, tok);
-					sep = ",";
-				}
-				tok = strtok_r(NULL, ",", &save_ptr);
-			}
-			xfree(tmp);
-		}
+		if (node_features_cnt == 0)
+			continue;
+
+		/* If we are here, there's a node_features plugin active */
 
 		/*
 		 * The subset of plugin-controlled features_available
@@ -1830,17 +1946,13 @@ static int _restore_node_state(int recover,
 		node_ptr->select_nodeinfo = old_node_ptr->select_nodeinfo;
 		old_node_ptr->select_nodeinfo = tmp_select_nodeinfo;
 
-#ifndef HAVE_BG
-		/* If running on a BlueGene system the cpus never
-		   change so just skip this.
-		*/
 		if (old_node_ptr->port != node_ptr->config_ptr->cpus) {
 			rc = ESLURM_NEED_RESTART;
 			error("Configured cpu count change on %s (%u to %u)",
 			      node_ptr->name, old_node_ptr->port,
 			      node_ptr->config_ptr->cpus);
 		}
-#endif
+
 		node_ptr->boot_time     = old_node_ptr->boot_time;
 		node_ptr->cpus          = old_node_ptr->cpus;
 		node_ptr->cores         = old_node_ptr->cores;
@@ -1871,12 +1983,6 @@ static int _restore_node_state(int recover,
 			old_node_ptr->reason = NULL;
 		}
 		if (recover == 2) {
-			/* NOTE: features in node record just a placeholder
-			 * for restore_node_features() to set up new config
-			 * records. */
-			xfree(node_ptr->features);
-			node_ptr->features = old_node_ptr->features;
-			old_node_ptr->features = NULL;
 			xfree(node_ptr->gres);
 			node_ptr->gres = old_node_ptr->gres;
 			old_node_ptr->gres = NULL;
@@ -2497,8 +2603,7 @@ static int _sync_nodes_to_comp_job(void)
 				continue;
 
 			update_cnt++;
-			info("%s: Job %u in completing state",
-			     __func__, job_ptr->job_id);
+			info("%s: %pJ in completing state", __func__, job_ptr);
 			if (!job_ptr->node_bitmap_cg)
 				build_cg_bitmap(job_ptr);
 
@@ -2570,21 +2675,21 @@ static int _sync_nodes_to_active_job(struct job_record *job_ptr)
 			/* This should only happen if a job was running
 			 * on a node that was newly configured DOWN */
 			int save_accounting_enforce;
-			info("Removing failed node %s from job_id %u",
-			     node_ptr->name, job_ptr->job_id);
+			info("Removing failed node %s from %pJ",
+			     node_ptr->name, job_ptr);
 			/* Disable accounting here. Accounting reset for all
 			 * jobs in _restore_job_dependencies() */
 			save_accounting_enforce = accounting_enforce;
 			accounting_enforce &= (~ACCOUNTING_ENFORCE_LIMITS);
 			job_pre_resize_acctg(job_ptr);
-			srun_node_fail(job_ptr->job_id, node_ptr->name);
+			srun_node_fail(job_ptr, node_ptr->name);
 			kill_step_on_node(job_ptr, node_ptr, true);
 			excise_node_from_job(job_ptr, node_ptr);
 			job_post_resize_acctg(job_ptr);
 			accounting_enforce = save_accounting_enforce;
 		} else if (IS_NODE_DOWN(node_ptr) && IS_JOB_RUNNING(job_ptr)) {
-			info("Killing job %u on DOWN node %s",
-			     job_ptr->job_id, node_ptr->name);
+			info("Killing %pJ on DOWN node %s",
+			     job_ptr, node_ptr->name);
 			_abort_job(job_ptr, JOB_NODE_FAIL, FAIL_DOWN_NODE,
 				   NULL);
 			cnt++;
@@ -2629,10 +2734,9 @@ static int _restore_job_dependencies(void)
 	char *new_depend;
 	bool valid = true;
 	List license_list;
-	assoc_mgr_lock_t locks = { .tres = READ_LOCK };
-	assoc_mgr_lock(&locks);
 
 	assoc_mgr_clear_used_info();
+
 	job_iterator = list_iterator_create(job_list);
 	while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
 		if (job_ptr->array_recs)
@@ -2653,14 +2757,22 @@ static int _restore_job_dependencies(void)
 			    IS_JOB_SUSPENDED(job_ptr)) {
 				acct_policy_job_begin(job_ptr);
 				job_claim_resv(job_ptr);
-			}
+			} else if (IS_JOB_PENDING(job_ptr) &&
+				   job_ptr->details &&
+				   job_ptr->details->accrue_time)
+				acct_policy_add_accrue_time(job_ptr, true);
 		}
 
-		license_list = license_validate(job_ptr->licenses,
+		license_list = license_validate(job_ptr->licenses, false, false,
 						job_ptr->tres_req_cnt, &valid);
 		FREE_NULL_LIST(job_ptr->license_list);
-		if (valid)
+		if (valid) {
 			job_ptr->license_list = license_list;
+			xfree(job_ptr->licenses);
+			job_ptr->licenses =
+				license_list_to_string(license_list);
+		}
+
 		if (IS_JOB_RUNNING(job_ptr) || IS_JOB_SUSPENDED(job_ptr))
 			license_job_get(job_ptr);
 
@@ -2671,15 +2783,13 @@ static int _restore_job_dependencies(void)
 		job_ptr->details->dependency = NULL;
 		rc = update_job_dependency(job_ptr, new_depend);
 		if (rc != SLURM_SUCCESS) {
-			error("Invalid dependencies discarded for job %u: %s",
-				job_ptr->job_id, new_depend);
+			error("Invalid dependencies discarded for %pJ: %s",
+				job_ptr, new_depend);
 			error_code = rc;
 		}
 		xfree(new_depend);
 	}
 	list_iterator_destroy(job_iterator);
-
-	assoc_mgr_unlock(&locks);
 
 	return error_code;
 }
@@ -2842,11 +2952,9 @@ extern int dump_config_state_lite(void)
 
 extern int load_config_state_lite(void)
 {
-	int data_allocated, data_read = 0;
-	uint32_t data_size = 0, uint32_tmp = 0;
+	uint32_t uint32_tmp = 0;
 	uint16_t ver = 0;
-	int state_fd;
-	char *data = NULL, *state_file;
+	char *state_file;
 	Buf buffer;
 	time_t buf_time;
 	char *last_accounting_storage_type = NULL;
@@ -2856,36 +2964,12 @@ extern int load_config_state_lite(void)
 				    slurmctld_conf.state_save_location);
 
 	//info("looking at the %s file", state_file);
-	state_fd = open(state_file, O_RDONLY);
-	if (state_fd < 0) {
+	if (!(buffer = create_mmap_buf(state_file))) {
 		debug2("No last_config_lite file (%s) to recover", state_file);
 		xfree(state_file);
 		return ENOENT;
-	} else {
-		data_allocated = BUF_SIZE;
-		data = xmalloc(data_allocated);
-		while (1) {
-			data_read = read(state_fd, &data[data_size],
-					 BUF_SIZE);
-			if (data_read < 0) {
-				if (errno == EINTR)
-					continue;
-				else {
-					error("Read error on %s: %m",
-					      state_file);
-					break;
-				}
-			} else if (data_read == 0)	/* eof */
-				break;
-			data_size      += data_read;
-			data_allocated += data_read;
-			xrealloc(data, data_allocated);
-		}
-		close(state_fd);
 	}
 	xfree(state_file);
-
-	buffer = create_buf(data, data_size);
 
 	safe_unpack16(&ver, buffer);
 	debug3("Version in last_conf_lite header is %u", ver);

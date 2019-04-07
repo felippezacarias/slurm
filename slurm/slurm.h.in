@@ -43,12 +43,6 @@
 #ifndef _SLURM_H
 #define _SLURM_H
 
-/* Define to 1 if you have Blue Gene system support. */
-#undef HAVE_BG
-
-/* Define to 1 if emulating or running on Blue Gene/Q system */
-#undef HAVE_BGQ
-
 /* Number of dimensions the system has */
 #define SYSTEM_DIMENSIONS 1
 #define HIGHEST_DIMENSIONS 5
@@ -575,7 +569,7 @@ enum node_use_type {
 
 /* Select plugin (id) in use by cluster */
 enum select_plugin_type {
-	SELECT_PLUGIN_BLUEGENE       = 100, /* Bluegene all variants */
+	/* 100 unused (originally for BlueGene) */
 	SELECT_PLUGIN_CONS_RES       = 101, /* Cons Res on a normal system */
 	SELECT_PLUGIN_LINEAR         = 102, /* Linear on a normal system */
 	/* 103 unused (originally used for BGQ) */
@@ -597,33 +591,16 @@ enum switch_plugin_type {
 };
 
 enum select_jobdata_type {
-	SELECT_JOBDATA_GEOMETRY,/* data-> uint16_t geometry[SYSTEM_DIMENSIONS] */
-	SELECT_JOBDATA_ROTATE,	/* data-> uint16_t rotate */
-	SELECT_JOBDATA_CONN_TYPE,	/* data-> uint16_t connection_type */
-	SELECT_JOBDATA_BLOCK_ID,	/* data-> char *bg_block_id */
-	SELECT_JOBDATA_NODES,	/* data-> char *nodes */
-	SELECT_JOBDATA_IONODES,	/* data-> char *ionodes */
-	SELECT_JOBDATA_NODE_CNT,	/* data-> uint32_t cnode_cnt */
-	SELECT_JOBDATA_ALTERED,    /* data-> uint16_t altered */
-	SELECT_JOBDATA_BLRTS_IMAGE,/* data-> char *blrtsimage */
-	SELECT_JOBDATA_LINUX_IMAGE,/* data-> char *linuximage */
-	SELECT_JOBDATA_MLOADER_IMAGE,/* data-> char *mloaderimage */
-	SELECT_JOBDATA_RAMDISK_IMAGE,/* data-> char *ramdiskimage */
-	SELECT_JOBDATA_REBOOT,	/* data-> uint16_t reboot */
-	SELECT_JOBDATA_RESV_ID,	/* data-> uint32_t reservation_id */
-	SELECT_JOBDATA_PAGG_ID,	/* data-> uint64_t job container ID */
-	SELECT_JOBDATA_PTR,	/* data-> select_jobinfo_t *jobinfo */
-	SELECT_JOBDATA_BLOCK_PTR, /* data-> bg_record_t *bg_record */
-	SELECT_JOBDATA_DIM_CNT, /* data-> uint16_t dim_cnt */
-	SELECT_JOBDATA_BLOCK_NODE_CNT,	/* data-> uint32_t block_cnode_cnt */
-	SELECT_JOBDATA_START_LOC, /* data-> uint16_t
-				   * start_loc[SYSTEM_DIMENSIONS] */
-	SELECT_JOBDATA_USER_NAME, /* data-> char * user_name */
-	SELECT_JOBDATA_CONFIRMED, /* data-> uint8_t ALPS reservation confirmed */
-	SELECT_JOBDATA_CLEANING, /* data-> uint16_t if the job is in
-				  * cleaning state or not. */
-	SELECT_JOBDATA_NETWORK,  /* data-> char * network info */
-	SELECT_JOBDATA_RELEASED /* if job resources have been released */
+	SELECT_JOBDATA_RESV_ID	= 13,	/* data-> uint32_t reservation_id */
+	SELECT_JOBDATA_PAGG_ID	= 14,	/* data-> uint64_t job container ID */
+	SELECT_JOBDATA_PTR	= 15,	/* data-> select_jobinfo_t *jobinfo */
+	SELECT_JOBDATA_BLOCK_PTR = 16,	/* data-> bg_record_t *bg_record */
+	SELECT_JOBDATA_DIM_CNT	= 17,	/* data-> uint16_t dim_cnt */
+	SELECT_JOBDATA_CONFIRMED = 21,	/* data-> uint8_t ALPS reservation confirmed */
+	SELECT_JOBDATA_CLEANING	= 22,	/* data-> uint16_t if the job is in
+					 * cleaning state or not. */
+	SELECT_JOBDATA_NETWORK	= 23,	/* data-> char * network info */
+	SELECT_JOBDATA_RELEASED	= 24,	/* if job resources have been released */
 };
 
 enum select_nodedata_type {
@@ -913,6 +890,7 @@ enum node_states {
 					  * configure a node */
 #define NODE_STATE_MAINT      0x00008000 /* node in maintenance reservation */
 #define NODE_STATE_REBOOT     0x00010000 /* node reboot requested */
+#define NODE_STATE_CANCEL_REBOOT 0x00020000 /* cancel pending reboot */
 
 /* used to define the size of the credential.signature size
  * used to define the key size of the io_stream_header_t
@@ -1059,6 +1037,12 @@ enum ctx_keys {
 #define JOB_SALLOC_FLAG    0x00010000	/* For internal salloc/sbatch/srun use */
 #define TOP_PRIO_TMP       0x00020000	/* Temporary flag for top priority job
 					 * operation */
+#define JOB_ACCRUE_OVER    0x00040000	/* We have cleared the accrual count of
+					 * a job. */
+#define GRES_DISABLE_BIND  0x00080000	/* Disable CPU/GRES binding */
+#define JOB_WAS_RUNNING    0x00100000  /* Job was running */
+#define RESET_ACCRUE_TIME  0x00200000   /* Reset the job's accrue time */
+#define INVALID_DEPEND     0x00400000	/* Job has invalid dependency(ies). */
 
 #define X11_FORWARD_ALL		0x0001	/* all nodes should setup forward */
 #define X11_FORWARD_BATCH	0x0002  /* only the batch node */
@@ -1516,6 +1500,7 @@ typedef struct job_descriptor {	/* For submit, allocate, and update requests */
 	uint16_t requeue;	/* enable or disable job requeue option */
 	char *reservation;	/* name of reservation to use */
 	char *script;		/* the actual job script, default NONE */
+	void *script_buf;	/* job script as mmap buf */
 	uint16_t shared;	/* 2 if the job can only share nodes with other
 				 *   jobs owned by that user,
 				 * 1 if job can share nodes with other jobs,
@@ -1575,22 +1560,6 @@ typedef struct job_descriptor {	/* For submit, allocate, and update requests */
 	uint32_t pn_min_tmp_disk;/* minimum tmp disk per node,
 				  * default=0 */
 
-/*
- * The following parameters are only meaningful on a Blue Gene
- * system at present. Some will be of value on other system. Don't remove these
- * they are needed for LCRM and others that can't talk to the opaque data type
- * select_jobinfo.
- */
-	uint16_t geometry[HIGHEST_DIMENSIONS];	/* node count in various
-						 * dimensions, e.g. X, Y, and Z */
-	uint16_t conn_type[HIGHEST_DIMENSIONS];	/* see enum connection_type */
-	uint16_t rotate;	/* permit geometry rotation if set */
-	char *blrtsimage;       /* BlrtsImage for block */
-	char *linuximage;       /* LinuxImage for block */
-	char *mloaderimage;     /* MloaderImage for block */
-	char *ramdiskimage;     /* RamDiskImage for block */
-
-/* End of Blue Gene specific values */
 	uint32_t req_switch;    /* Minimum number of switches */
 	dynamic_plugin_data_t *select_jobinfo; /* opaque data type,
 					   * Slurm internal use only */
@@ -1609,6 +1578,7 @@ typedef struct job_descriptor {	/* For submit, allocate, and update requests */
 
 typedef struct job_info {
 	char *account;		/* charge to specified account */
+	time_t accrue_time;	/* time job is eligible for running */
 	char *admin_comment;	/* administrator's arbitrary comment */
 	char    *alloc_node;	/* local node making resource alloc */
 	uint32_t alloc_sid;	/* local sid making resource alloc */
@@ -2170,6 +2140,7 @@ typedef struct node_info {
 	char *mcs_label;	/* mcs label if mcs plugin in use */
 	uint64_t mem_spec_limit; /* MB memory limit for specialization */
 	char *name;		/* node name to slurm */
+	uint32_t next_state;	/* state after reboot (enum node_states) */
 	char *node_addr;	/* communication name (optional) */
 	char *node_hostname;	/* node's hostname (optional) */
 	uint32_t node_state;	/* see enum node_states */
@@ -2414,118 +2385,12 @@ typedef struct will_run_response_msg {
 	uint32_t job_id;	/* ID of job to start */
 	char *job_submit_user_msg; /* job submit plugin user_msg */
 	char *node_list;	/* nodes where job will start */
+	char *part_name;	/* partition where job will start */
 	List preemptee_job_id;	/* jobs preempted to start this job */
 	uint32_t proc_cnt;	/* CPUs allocated to job at start */
 	time_t start_time;	/* time when job will start */
 	double sys_usage_per;	/* System usage percentage */
 } will_run_response_msg_t;
-
-
-/* BLUEGENE specific information */
-
-typedef struct {
-	char *cnodes;           /* used for sub-block jobs */
-	int32_t *cnode_inx;	/* list index pairs for cnodes in the
-				 * node listed for *cnodes:
-				 * start_range_1, end_range_1,
-				 * start_range_2, .., -1  used for
-				 * sub-block jobs */
-	uint32_t job_id;        /* job id */
-	void *job_ptr;          /* internal use only, not packed. */
-	uint32_t user_id;       /* user running the job's ID */
-	char *user_name;        /* user running the job's name */
-} block_job_info_t;
-
-typedef struct {
-	char *bg_block_id;
-	char *blrtsimage;       /* BlrtsImage for this block */
-	uint16_t conn_type[HIGHEST_DIMENSIONS];
-	uint32_t cnode_cnt;
-	uint32_t cnode_err_cnt;
-	int32_t *ionode_inx;	/* list index pairs for ionodes in the
-				 * node listed for *ionode_str:
-				 * start_range_1, end_range_1,
-				 * start_range_2, .., -1  */
-	char *ionode_str;
-	List job_list;          /* List of running jobs on each block */
-	char *linuximage;       /* LinuxImage for this block */
-	char *mloaderimage;     /* mloaderImage for this block */
-	int32_t *mp_inx;	/* list index pairs into node_table for *mp_str:
-				 * start_range_1, end_range_1,
-				 * start_range_2, .., -1  */
-	char *mp_str;
-	uint16_t node_use;
-	char *ramdiskimage;     /* RamDiskImage for this block */
-	char *reason;
-	uint16_t state;
-} block_info_t;
-
-typedef struct {
-	block_info_t *block_array;
-	time_t    last_update;
-	uint32_t  record_count;
-} block_info_msg_t;
-
-typedef block_info_t update_block_msg_t;
-
-/*
- * slurm_print_block_info_msg - output information about all Bluegene
- *	blocks based upon message as loaded using slurm_load_block
- * IN out - file to write to
- * IN info_ptr - block information message pointer
- * IN one_liner - print as a single line if true
- */
-extern void slurm_print_block_info_msg(FILE *out,
-				       block_info_msg_t *info_ptr,
-				       int one_liner);
-
-/*
- * slurm_print_block_info - output information about a specific Bluegene
- *	block based upon message as loaded using slurm_load_block
- * IN out - file to write to
- * IN bg_info_ptr - an individual block information record pointer
- * IN one_liner - print as a single line if true
- */
-extern void slurm_print_block_info(FILE *out,
-				   block_info_t *bg_info_ptr,
-				   int one_liner);
-
-/*
- * slurm_sprint_block_info - output information about a specific Bluegene
- *	block based upon message as loaded using slurm_load_block
- * IN bg_info_ptr - an individual partition information record pointer
- * IN one_liner - print as a single line if true
- * RET out - char * containing formatted output (must be freed after call)
- *           NULL is returned on failure.
- */
-extern char *slurm_sprint_block_info(block_info_t *bg_info_ptr, int one_liner);
-
-/*
- * slurm_load_block_info - issue RPC to get slurm all node select plugin
- *	information if changed since update_time
- * IN update_time - time of current configuration data
- * IN block_info_msg_pptr - place to store a node select configuration
- *	pointer
- * IN show_flags - controls output form or filtering, see SHOW_* in slurm.h
- * RET 0 or a slurm error code
- * NOTE: free the response using slurm_free_block_info_msg
- */
-extern int slurm_load_block_info(time_t update_time,
-				 block_info_msg_t **block_info_msg_pptr,
-				 uint16_t show_flags);
-
-/*
- * slurm_free_block_info_msg - free buffer returned by
- *	slurm_load_block
- * IN block_info_msg_ptr - pointer to block_info_msg_t
- * RET 0 or a slurm error code
- */
-extern void slurm_free_block_info_msg(block_info_msg_t *block_info_msg);
-
-/* update state or remove block */
-extern int slurm_update_block(update_block_msg_t *block_msg);
-
-void slurm_init_update_block_msg(update_block_msg_t *update_block_msg);
 
 /*********************************/
 
@@ -3090,6 +2955,7 @@ typedef struct stats_info_response_msg {
 	time_t req_time_start;
 	uint32_t server_thread_count;
 	uint32_t agent_queue_size;
+	uint32_t agent_count;
 	uint32_t dbd_agent_queue_size;
 	uint32_t gettimeofday_latency;
 
@@ -3135,6 +3001,14 @@ typedef struct stats_info_response_msg {
 	uint32_t *rpc_user_id;
 	uint32_t *rpc_user_cnt;
 	uint64_t *rpc_user_time;
+
+	uint32_t rpc_queue_type_count;
+	uint32_t *rpc_queue_type_id;
+	uint32_t *rpc_queue_count;
+
+	uint32_t rpc_dump_count;
+	uint32_t *rpc_dump_types;
+	char **rpc_dump_hostlist;
 } stats_info_response_msg_t;
 
 #define TRIGGER_FLAG_PERM		0x0001
@@ -3153,7 +3027,7 @@ typedef struct stats_info_response_msg {
 #define TRIGGER_TYPE_TIME               0x00000008
 #define TRIGGER_TYPE_FINI               0x00000010
 #define TRIGGER_TYPE_RECONFIG           0x00000020
-#define TRIGGER_TYPE_BLOCK_ERR          0x00000040
+/*  was TRIGGER_TYPE_BLOCK_ERR          0x00000040, removed v18.08 */
 #define TRIGGER_TYPE_IDLE               0x00000080
 #define TRIGGER_TYPE_DRAINED            0x00000100
 #define TRIGGER_TYPE_PRI_CTLD_FAIL      0x00000200
@@ -3175,6 +3049,7 @@ typedef struct trigger_info {
 	uint32_t trig_id;	/* trigger ID */
 	uint16_t res_type;	/* TRIGGER_RES_TYPE_* */
 	char *   res_id;	/* resource ID */
+	uint32_t control_inx;	/* controller index */
 	uint32_t trig_type;	/* TRIGGER_TYPE_* */
 	uint16_t offset;	/* seconds from trigger, 0x8000 origin */
 	uint32_t user_id;	/* user requesting trigger */
@@ -4498,17 +4373,6 @@ extern int slurm_update_powercap(update_powercap_msg_t *powercap_msg);
 /*****************************************************************************\
  *	SLURM SELECT READ/PRINT/UPDATE FUNCTIONS
 \*****************************************************************************/
-
-/*
- * slurm_get_select_jobinfo - get data from a select job credential
- * IN jobinfo  - updated select job credential
- * IN data_type - type of data to enter into job credential
- * IN/OUT data - the data to enter into job credential
- * RET 0 or -1 on error
- */
-extern int slurm_get_select_jobinfo(dynamic_plugin_data_t *jobinfo,
-				    enum select_jobdata_type data_type,
-				    void *data);
 
 /*
  * slurm_get_select_nodeinfo - get data from a select node credential

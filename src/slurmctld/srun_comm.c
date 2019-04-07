@@ -83,20 +83,20 @@ static bool _pending_pack_jobs(struct job_record *job_ptr)
 
 	pack_leader = find_job_record(job_ptr->pack_job_id);
 	if (!pack_leader) {
-		error("Job pack leader %u not found", job_ptr->pack_job_id);
+		error("Job pack leader %pJ not found", job_ptr);
 		return false;
 	}
 	if (!pack_leader->pack_job_list) {
-		error("Job pack leader %u lacks pack_job_list",
-		      job_ptr->pack_job_id);
+		error("Job pack leader %pJ lacks pack_job_list",
+		      job_ptr);
 		return false;
 	}
 
 	iter = list_iterator_create(pack_leader->pack_job_list);
 	while ((pack_job = (struct job_record *) list_next(iter))) {
 		if (pack_leader->pack_job_id != pack_job->pack_job_id) {
-			error("%s: Bad pack_job_list for job %u",
-			      __func__, pack_leader->pack_job_id);
+			error("%s: Bad pack_job_list for %pJ",
+			      __func__, pack_leader);
 			continue;
 		}
 		if (IS_JOB_PENDING(pack_job)) {
@@ -121,11 +121,10 @@ static void _free_srun_alloc(void *x)
 
 /*
  * srun_allocate - notify srun of a resource allocation
- * IN job_id - id of the job allocated resource
+ * IN job_ptr - job allocated resources
  */
-extern void srun_allocate (uint32_t job_id)
+extern void srun_allocate(struct job_record *job_ptr)
 {
-	struct job_record *job_ptr = find_job_record(job_id);
 	struct job_record *pack_job, *pack_leader;
 	resource_allocation_response_msg_t *msg_arg = NULL;
 	slurm_addr_t *addr;
@@ -161,8 +160,8 @@ extern void srun_allocate (uint32_t job_id)
 		iter = list_iterator_create(pack_leader->pack_job_list);
 		while ((pack_job = (struct job_record *) list_next(iter))) {
 			if (pack_leader->pack_job_id != pack_job->pack_job_id) {
-				error("%s: Bad pack_job_list for job %u",
-				      __func__, pack_leader->pack_job_id);
+				error("%s: Bad pack_job_list for %pJ",
+				      __func__, pack_leader);
 				continue;
 			}
 			msg_arg = build_alloc_msg(pack_job, SLURM_SUCCESS,
@@ -175,14 +174,14 @@ extern void srun_allocate (uint32_t job_id)
 				   RESPONSE_JOB_PACK_ALLOCATION, job_resp_list,
 				   job_ptr->start_protocol_ver);
 	} else {
-		error("%s: Can not find pack job leader %u",
-		      __func__, job_ptr->pack_job_id);
+		error("%s: Can not find pack job leader %pJ",
+		      __func__, job_ptr);
 	}
 }
 
 /*
  * srun_allocate_abort - notify srun of a resource allocation failure
- * IN job_id - id of the job allocated resource
+ * IN job_ptr - job allocated resources
  */
 extern void srun_allocate_abort(struct job_record *job_ptr)
 {
@@ -205,15 +204,14 @@ extern void srun_allocate_abort(struct job_record *job_ptr)
 
 /*
  * srun_node_fail - notify srun of a node's failure
- * IN job_id    - id of job to notify
+ * IN job_ptr - job to notify
  * IN node_name - name of failed node
  */
-extern void srun_node_fail (uint32_t job_id, char *node_name)
+extern void srun_node_fail(struct job_record *job_ptr, char *node_name)
 {
 #ifndef HAVE_FRONT_END
 	struct node_record *node_ptr;
 #endif
-	struct job_record *job_ptr = find_job_record (job_id);
 	int bit_position = -1;
 	slurm_addr_t * addr;
 	srun_node_fail_msg_t *msg_arg;
@@ -260,7 +258,7 @@ extern void srun_node_fail (uint32_t job_id, char *node_name)
 		addr = xmalloc(sizeof(struct sockaddr_in));
 		slurm_set_addr(addr, job_ptr->other_port, job_ptr->resp_host);
 		msg_arg = xmalloc(sizeof(srun_node_fail_msg_t));
-		msg_arg->job_id   = job_id;
+		msg_arg->job_id   = job_ptr->job_id;
 		msg_arg->step_id  = NO_VAL;
 		msg_arg->nodelist = xstrdup(node_name);
 		_srun_agent_launch(addr, job_ptr->alloc_node, SRUN_NODE_FAIL,
@@ -590,8 +588,8 @@ extern void srun_exec(struct step_record *step_ptr, char **argv)
 		_srun_agent_launch(addr, step_ptr->host, SRUN_EXEC,
 				   msg_arg, step_ptr->start_protocol_ver);
 	} else {
-		error("srun_exec %u.%u lacks communication channel",
-			step_ptr->job_ptr->job_id, step_ptr->step_id);
+		error("srun_exec %pS lacks communication channel",
+		      step_ptr);
 	}
 }
 

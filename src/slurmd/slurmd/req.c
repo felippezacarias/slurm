@@ -494,6 +494,16 @@ _send_slurmstepd_init(int fd, int type, void *req,
 		goto rwfail;
 
 	/*
+	 * Wait for the regestration to come back from the slurmctld so we have
+	 * a TRES list to work with.
+	 */
+	if (!assoc_mgr_tres_list) {
+		slurm_mutex_lock(&tres_mutex);
+		slurm_cond_wait(&tres_cond, &tres_mutex);
+		slurm_mutex_unlock(&tres_mutex);
+	}
+
+	/*
 	 * Send over right after the slurmd_conf_lite! We don't care about the
 	 * assoc/qos locks assoc_mgr_post_tres_list is requesting as those lists
 	 * don't exist here.
@@ -510,8 +520,8 @@ _send_slurmstepd_init(int fd, int type, void *req,
 		free_buf(buffer);
 		buffer = NULL;
 	} else {
-		len = 0;
-		safe_write(fd, &len, sizeof(int));
+		fatal("%s: assoc_mgr_tres_list is NULL when trying to start a slurmstepd. This should never happen.",
+		      __func__);
 	}
 	assoc_mgr_unlock(&locks);
 
@@ -849,8 +859,6 @@ _forkexec_slurmstepd(uint16_t type, void *req,
 #endif
 		int i;
 		int failed = 0;
-		/* inform slurmstepd about our config */
-		setenv("SLURM_CONF", conf->conffile, 1);
 
 		/*
 		 * Child forks and exits
@@ -888,7 +896,7 @@ _forkexec_slurmstepd(uint16_t type, void *req,
 		 */
 		if ((to_stepd[0] != conf->lfd)
 		    && (to_slurmd[1] != conf->lfd))
-			slurm_shutdown_msg_engine(conf->lfd);
+			close(conf->lfd);
 
 		if (close(to_stepd[1]) < 0)
 			error("close write to_stepd in grandchild: %m");
@@ -926,6 +934,7 @@ static void _setup_x11_display(uint32_t job_id, uint32_t step_id,
 			       char ***env, uint32_t *envc)
 {
 	int display = 0, fd;
+	char *xauthority = NULL;
 	uint16_t protocol_version;
 
 	fd = stepd_connect(conf->spooldir, conf->node_name,
@@ -938,18 +947,26 @@ static void _setup_x11_display(uint32_t job_id, uint32_t step_id,
 		return;
 	}
 
-	display = stepd_get_x11_display(fd, protocol_version);
+	display = stepd_get_x11_display(fd, protocol_version, &xauthority);
 	close(fd);
 
 	if (!display) {
 		error("could not get x11 forwarding display for job %u step %u,"
 		      " x11 forwarding disabled", job_id, step_id);
+		env_array_overwrite(env, "DISPLAY", "SLURM_X11_SETUP_FAILED");
+		*envc = envcount(*env);
 		return;
 	}
 
 	debug2("%s: setting DISPLAY=localhost:%d:0 for job %u step %u",
 	       __func__, display, job_id, step_id);
 	env_array_overwrite_fmt(env, "DISPLAY", "localhost:%d.0", display);
+
+	if (xauthority) {
+		env_array_overwrite(env, "XAUTHORITY", xauthority);
+		xfree(xauthority);
+	}
+
 	*envc = envcount(*env);
 }
 
@@ -2196,11 +2213,7 @@ static void _rpc_prolog(slurm_msg_t *msg)
 		job_env.spank_job_env_size = req->spank_job_env_size;
 		job_env.uid = req->uid;
 		job_env.user_name = req->user_name;
-#if defined(HAVE_BG)
-		select_g_select_jobinfo_get(req->select_jobinfo,
-					    SELECT_JOBDATA_BLOCK_ID,
-					    &job_env.resv_id);
-#elif defined(HAVE_ALPS_CRAY)
+#if defined(HAVE_ALPS_CRAY)
 		job_env.resv_id = select_g_select_jobinfo_xstrdup(
 			req->select_jobinfo, SELECT_PRINT_RESV_ID);
 #endif
@@ -2345,6 +2358,8 @@ _rpc_batch_job(slurm_msg_t *msg, bool new_msg)
 			if (retry_cnt > 50) {
 				rc = ESLURMD_PROLOG_FAILED;
 				slurm_mutex_unlock(&prolog_mutex);
+				error("Waiting for JobId=%u prolog has failed, giving up after 50 sec",
+				      req->job_id);
 				goto done;
 			}
 
@@ -2370,7 +2385,6 @@ _rpc_batch_job(slurm_msg_t *msg, bool new_msg)
 		slurm_mutex_unlock(&prolog_mutex);
 
 		memset(&job_env, 0, sizeof(job_env_t));
-
 		job_env.jobid = req->job_id;
 		job_env.step_id = req->step_id;
 		job_env.node_list = req->nodes;
@@ -2382,11 +2396,7 @@ _rpc_batch_job(slurm_msg_t *msg, bool new_msg)
 		/*
 	 	 * Run job prolog on this node
 	 	 */
-#if defined(HAVE_BG)
-		select_g_select_jobinfo_get(req->select_jobinfo,
-					    SELECT_JOBDATA_BLOCK_ID,
-					    &job_env.resv_id);
-#elif defined(HAVE_ALPS_CRAY)
+#if defined(HAVE_ALPS_CRAY)
 		job_env.resv_id = select_g_select_jobinfo_xstrdup(
 			req->select_jobinfo, SELECT_PRINT_RESV_ID);
 #endif
@@ -2752,7 +2762,9 @@ _rpc_reboot(slurm_msg_t *msg)
 			 * case that fails to shut things down this will at
 			 * least offline this node until someone intervenes.
 			 */
-			slurmd_shutdown(SIGTERM);
+			if (xstrcasestr(cfg->slurmd_params,
+					"shutdown_on_reboot"))
+				slurmd_shutdown(SIGTERM);
 		} else
 			error("RebootProgram isn't defined in config");
 		slurm_conf_unlock();
@@ -2899,9 +2911,6 @@ _enforce_job_mem_limit(void)
 	};
 	struct job_mem_info *job_mem_info_ptr = NULL;
 
-	/* If users have configured MemLimitEnforce=no
-	 * in their slurm.conf keep going.
-	 */
 	if (conf->mem_limit_enforce == false)
 		return;
 
@@ -2981,16 +2990,21 @@ _enforce_job_mem_limit(void)
 					    &step_vsize,
 					    stepd->protocol_version);
 #if _LIMIT_INFO
-			info("Step:%u.%u RSS:%"PRIu64" KB VSIZE:%"PRIu64" KB",
+			info("Step:%u.%u RSS:%"PRIu64" B VSIZE:%"PRIu64" B",
 			     stepd->jobid, stepd->stepid,
 			     step_rss, step_vsize);
 #endif
-			step_rss /= 1024;	/* KB to MB */
-			step_rss = MAX(step_rss, 1);
-			job_mem_info_ptr[job_inx].mem_used += step_rss;
-			step_vsize /= 1024;	/* KB to MB */
-			step_vsize = MAX(step_vsize, 1);
-			job_mem_info_ptr[job_inx].vsize_used += step_vsize;
+			if (step_rss != INFINITE64) {
+				step_rss /= 1048576;	/* B to MB */
+				step_rss = MAX(step_rss, 1);
+				job_mem_info_ptr[job_inx].mem_used += step_rss;
+			}
+			if (step_vsize != INFINITE64) {
+				step_vsize /= 1048576;	/* B to MB */
+				step_vsize = MAX(step_vsize, 1);
+				job_mem_info_ptr[job_inx].vsize_used +=
+					step_vsize;
+			}
 		}
 		slurm_free_job_step_stat(resp);
 		close(fd);
@@ -4281,7 +4295,12 @@ static int _receive_fd(int socket)
 	}
 
 	cmsg = CMSG_FIRSTHDR(&msg);
+	if (!cmsg) {
+		error("%s: CMSG_FIRSTHDR error: %m", __func__);
+		return -1;
+	}
 	memmove(&fd, CMSG_DATA(cmsg), sizeof(fd));
+
 	return fd;
 }
 
@@ -4502,8 +4521,8 @@ _kill_all_active_steps(uint32_t jobid, int sig, int flags, bool batch,
 	while ((stepd = list_next(i))) {
 		if (stepd->jobid != jobid) {
 			/* multiple jobs expected on shared nodes */
-			debug3("Step from other job: jobid=%u (this jobid=%u)",
-			       stepd->jobid, jobid);
+			debug3("%s: Looking for job %u, found step from job %u",
+			       __func__, jobid, stepd->jobid);
 			continue;
 		}
 
@@ -5113,11 +5132,7 @@ _rpc_abort_job(slurm_msg_t *msg)
 	job_env.spank_job_env_size = req->spank_job_env_size;
 	job_env.uid = req->job_uid;
 
-#if defined(HAVE_BG)
-	select_g_select_jobinfo_get(req->select_jobinfo,
-				    SELECT_JOBDATA_BLOCK_ID,
-				    &job_env.resv_id);
-#elif defined(HAVE_ALPS_CRAY)
+#if defined(HAVE_ALPS_CRAY)
 	job_env.resv_id = select_g_select_jobinfo_xstrdup(req->select_jobinfo,
 							  SELECT_PRINT_RESV_ID);
 #endif
@@ -5560,11 +5575,7 @@ _rpc_terminate_job(slurm_msg_t *msg)
 	job_env.spank_job_env_size = req->spank_job_env_size;
 	job_env.uid = req->job_uid;
 
-#if defined(HAVE_BG)
-	select_g_select_jobinfo_get(req->select_jobinfo,
-				    SELECT_JOBDATA_BLOCK_ID,
-				    &job_env.resv_id);
-#elif defined(HAVE_ALPS_CRAY)
+#if defined(HAVE_ALPS_CRAY)
 	job_env.resv_id = select_g_select_jobinfo_xstrdup(
 		req->select_jobinfo, SELECT_PRINT_RESV_ID);
 #endif
@@ -5767,6 +5778,7 @@ _pause_for_job_completion (uint32_t job_id, char *nodes, int max_time)
 			count++;
 		} else if (count == 3) {
 			usleep(500000);
+			count++;
 			sec = 1;
 		} else {
 			sleep(pause);
@@ -5863,9 +5875,7 @@ _build_env(job_env_t *job_env)
 		setenvf(&env, "SLURM_JOB_PARTITION", "%s", job_env->partition);
 
 	if (job_env->resv_id) {
-#if defined(HAVE_BG)
-		setenvf(&env, "MPIRUN_PARTITION", "%s", job_env->resv_id);
-#elif defined(HAVE_ALPS_CRAY)
+#if defined(HAVE_ALPS_CRAY)
 		setenvf(&env, "BASIL_RESERVATION_ID", "%s", job_env->resv_id);
 #endif
 	}
@@ -5875,10 +5885,10 @@ _build_env(job_env_t *job_env)
 static void
 _destroy_env(char **env)
 {
-	int i=0;
+	int i = 0;
 
 	if (env) {
-		for(i=0; env[i]; i++) {
+		for (i = 0; env[i]; i++) {
 			xfree(env[i]);
 		}
 		xfree(env);
@@ -5975,32 +5985,6 @@ static int _run_job_script(const char *name, const char *path,
 	return (status);
 }
 
-#ifdef HAVE_BG
-/* a slow prolog is expected on bluegene systems */
-static int
-_run_prolog(job_env_t *job_env, slurm_cred_t *cred, bool remove_running)
-{
-	int rc;
-	char *my_prolog;
-	char **my_env;
-
-	my_env = _build_env(job_env);
-	setenvf(&my_env, "SLURM_STEP_ID", "%u", job_env->step_id);
-
-	slurm_mutex_lock(&conf->config_mutex);
-	my_prolog = xstrdup(conf->prolog);
-	slurm_mutex_unlock(&conf->config_mutex);
-
-	rc = _run_job_script("prolog", my_prolog, job_env->jobid,
-			     -1, my_env, job_env->uid);
-	if (remove_running)
-		_remove_job_running_prolog(job_env->jobid);
-	xfree(my_prolog);
-	_destroy_env(my_env);
-
-	return rc;
-}
-#else
 static void *_prolog_timer(void *x)
 {
 	int delay_time, rc = SLURM_SUCCESS;
@@ -6149,7 +6133,6 @@ _run_prolog(job_env_t *job_env, slurm_cred_t *cred, bool remove_running)
 
 	return rc;
 }
-#endif
 
 static int
 _run_epilog(job_env_t *job_env)

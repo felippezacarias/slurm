@@ -60,15 +60,6 @@ void set_distribution(task_dist_states_t distribution,
 /* verify the requested distribution type */
 task_dist_states_t verify_dist_type(const char *arg, uint32_t *plane_size);
 
-/*
- * verify comma separated list of connection types to array of uint16_t
- * connection_types or NO_VAL if not recognized
- */
-extern void verify_conn_type(const char *arg, uint16_t *conn_type);
-
-/* verify the requested geometry arguments */
-int verify_geometry(const char *arg, uint16_t *geometry);
-
 /* return command name from its full path name */
 char * base_name(char* command);
 
@@ -126,12 +117,13 @@ char *print_mail_type(const uint16_t type);
  * search PATH to confirm the location and access mode of the given command
  * IN cwd - current working directory
  * IN cmd - command to execute
- * IN check_current_dir - if true, search cwd for the command
+ * IN check_cwd_last - if true, search cwd after PATH is checked
+ *                   - if false, search cwd for the command first
  * IN access_mode - required access rights of cmd
  * IN test_exec - if false, do not confirm access mode of cmd if full path
  * RET full path of cmd or NULL if not found
  */
-char *search_path(char *cwd, char *cmd, bool check_current_dir, int access_mode,
+char *search_path(char *cwd, char *cmd, bool check_cwd_last, int access_mode,
 		  bool test_exec);
 
 /* helper function for printing options */
@@ -175,14 +167,6 @@ extern int parse_int(const char *name, const char *val, bool positive);
  * IN  isenv - bool   cluster name from env or from command line option.
  */
 extern void print_db_notok(const char *cname, bool isenv);
-
-
-
-extern void bg_figure_nodes_tasks(int *min_nodes, int *max_nodes,
-				  int *ntasks_per_node, bool *ntasks_set,
-				  int *ntasks, bool nodes_set,
-				  bool nodes_set_opt, bool overcommit,
-				  bool set_tasks);
 
 /*
  * parse_resv_flags() used to parse the Flags= option.  It handles

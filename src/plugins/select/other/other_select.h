@@ -92,25 +92,6 @@ extern int other_node_init(struct node_record *node_ptr, int node_cnt);
 extern int other_block_init(List part_list);
 
 /*
- * Update specific block (usually something has gone wrong)
- * IN block_desc_ptr - information about the block
- */
-extern int other_update_block(update_block_msg_t *block_desc_ptr);
-
-/*
- * Update specific sub nodes(usually something has gone wrong)
- * IN block_desc_ptr - information about the block
- */
-extern int other_update_sub_node(update_block_msg_t *block_desc_ptr);
-
-/*
- * Fail certain cnodes in a blocks midplane (usually comes from the
- *        IBM runjob mux)
- * IN step_ptr - step that failed
- */
-extern int other_fail_cnode (struct step_record *step_ptr);
-
-/*
  * Get select data from a plugin
  * IN node_pts  - current node record
  * IN dinfo   - type of data to get from the node record
@@ -373,17 +354,6 @@ extern int other_select_nodeinfo_get(select_nodeinfo_t *nodeinfo,
  * NODE-SELECT PLUGIN SPECIFIC INFORMATION FUNCTIONS  *
 \******************************************************/
 
-/* pack node-select plugin specific information into a buffer in
- *	machine independent form
- * IN last_update_time - time of latest information consumer has
- * IN show_flags - flags to control information output
- * OUT buffer - location to hold the data, consumer must free
- * IN protocol_version - slurm protocol version of client
- * RET - slurm error code
- */
-extern int other_pack_select_info(time_t last_query_time, uint16_t show_flags,
-				  Buf *buffer, uint16_t protocol_version);
-
 /* Note reconfiguration or change in partition configuration */
 extern int other_reconfigure(void);
 
@@ -393,8 +363,6 @@ extern bitstr_t * other_resv_test(resv_desc_msg_t *resv_desc_ptr,
 				  bitstr_t **core_bitmap);
 
 extern void other_ba_init(node_info_msg_t *node_info_ptr, bool sanity_check);
-extern void other_ba_fini(void);
 extern int *other_ba_get_dims(void);
-extern bitstr_t *other_ba_cnodelist2bitmap(char *cnodelist);
 
 #endif /* _CRAY_OTHER_SELECT_H */

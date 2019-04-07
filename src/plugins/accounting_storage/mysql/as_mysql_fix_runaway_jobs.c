@@ -71,9 +71,34 @@ static int _first_job_roll_up(mysql_conn_t *mysql_conn, time_t first_start)
 	month_start = slurm_mktime(&start_tm);
 
 	query = xstrdup_printf("UPDATE \"%s_%s\" SET hourly_rollup = %ld, "
-			       "daily_rollup = %ld, monthly_rollup = %ld",
+			       "daily_rollup = %ld, monthly_rollup = %ld;",
 			       mysql_conn->cluster_name, last_ran_table,
 			       month_start, month_start, month_start);
+
+	/*
+	 * Delete allocated time from the assoc and wckey usage tables.
+	 * If the only usage during those times was runaway jobs, then rollup
+	 * won't clear that usage, so we have to clear it here. Rollup will
+	 * re-create the correct rows in these tables.
+	 */
+	xstrfmtcat(query, "DELETE FROM \"%s_%s\" where time_start >= %ld;",
+		   mysql_conn->cluster_name, assoc_hour_table,
+		   month_start);
+	xstrfmtcat(query, "DELETE FROM \"%s_%s\" where time_start >= %ld;",
+		   mysql_conn->cluster_name, assoc_day_table,
+		   month_start);
+	xstrfmtcat(query, "DELETE FROM \"%s_%s\" where time_start >= %ld;",
+		   mysql_conn->cluster_name, assoc_month_table,
+		   month_start);
+	xstrfmtcat(query, "DELETE FROM \"%s_%s\" where time_start >= %ld;",
+		   mysql_conn->cluster_name, wckey_hour_table,
+		   month_start);
+	xstrfmtcat(query, "DELETE FROM \"%s_%s\" where time_start >= %ld;",
+		   mysql_conn->cluster_name, wckey_day_table,
+		   month_start);
+	xstrfmtcat(query, "DELETE FROM \"%s_%s\" where time_start >= %ld;",
+		   mysql_conn->cluster_name, wckey_month_table,
+		   month_start);
 
 	if (debug_flags & DEBUG_FLAG_DB_QUERY)
 		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
@@ -94,12 +119,34 @@ extern int as_mysql_fix_runaway_jobs(mysql_conn_t *mysql_conn, uint32_t uid,
 	ListIterator iter = NULL;
 	int rc = SLURM_SUCCESS;
 	slurmdb_job_rec_t *first_job;
+	char *temp_cluster_name = mysql_conn->cluster_name;
+
+	if (!runaway_jobs) {
+		error("%s: No List of runaway jobs to fix given.",
+		      __func__);
+		rc = SLURM_ERROR;
+		goto bail;
+	}
 
 	list_sort(runaway_jobs, _job_sort_by_start_time);
-	first_job = list_peek(runaway_jobs);
 
-	if (check_connection(mysql_conn) != SLURM_SUCCESS)
-		return ESLURM_DB_CONNECTION;
+	if (!(first_job = list_peek(runaway_jobs))) {
+		error("%s: List of runaway jobs to fix is unexpectedly empty",
+		      __func__);
+		rc = SLURM_ERROR;
+		goto bail;
+	}
+
+	if (check_connection(mysql_conn) != SLURM_SUCCESS) {
+		rc = ESLURM_DB_CONNECTION;
+		goto bail;
+	}
+
+	/*
+	 * Temporarily use mysql_conn->cluster_name for potentially non local
+	 * cluster name, change back before return
+	 */
+	mysql_conn->cluster_name = first_job->cluster;
 
 	if (!is_user_min_admin_level(mysql_conn, uid, SLURMDB_ADMIN_OPERATOR)) {
 		slurmdb_user_rec_t user;
@@ -110,34 +157,51 @@ extern int as_mysql_fix_runaway_jobs(mysql_conn_t *mysql_conn, uint32_t uid,
 		if (!is_user_any_coord(mysql_conn, &user)) {
 			error("Only admins/operators/coordinators "
 			      "can fix runaway jobs");
-			return ESLURM_ACCESS_DENIED;
+			rc = ESLURM_ACCESS_DENIED;
+			goto bail;
 		}
 	}
 
 	iter = list_iterator_create(runaway_jobs);
 	while ((job = list_next(iter))) {
+		/*
+		 * Currently you can only fix one cluster at a time, so we need
+		 * to verify we don't have multiple cluster names.
+		 */
+		if (xstrcmp(job->cluster, first_job->cluster)) {
+			error("%s: You can only fix runaway jobs on one cluster at a time.",
+			      __func__);
+			rc = SLURM_ERROR;
+			goto bail;
+		}
+
 		xstrfmtcat(job_ids, "%s%d", ((job_ids) ? "," : ""), job->jobid);
 	}
 
 	query = xstrdup_printf("UPDATE \"%s_%s\" SET time_end="
 			       "GREATEST(time_start, time_eligible, time_submit), "
-			       "state=%d WHERE id_job IN (%s);",
+			       "state=%d WHERE time_end=0 && id_job IN (%s);",
 			       mysql_conn->cluster_name, job_table,
 			       JOB_COMPLETE, job_ids);
 
 	if (debug_flags & DEBUG_FLAG_DB_QUERY)
 		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
-	mysql_db_query(mysql_conn, query);
+	rc = mysql_db_query(mysql_conn, query);
 	xfree(query);
-	xfree(job_ids);
+
+	if (rc) {
+		error("Failed to fix runaway jobs: update query failed");
+		goto bail;
+	}
 
 	/* Set rollup to the the last day of the previous month of the first
 	 * runaway job */
 	rc = _first_job_roll_up(mysql_conn, first_job->start);
-	if (rc != SLURM_SUCCESS) {
+	if (rc != SLURM_SUCCESS)
 		error("Failed to fix runaway jobs");
-		return SLURM_ERROR;
-	}
 
+bail:
+	xfree(job_ids);
+	mysql_conn->cluster_name = temp_cluster_name;
 	return rc;
 }

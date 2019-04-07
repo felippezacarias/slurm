@@ -114,9 +114,7 @@ extern uint16_t drop_priv_flag;
 #define DEFAULT_KILL_TREE           0
 #define DEFAULT_KILL_WAIT           30
 
-#if defined HAVE_BG_FILES
-#  define DEFAULT_LAUNCH_TYPE         "launch/runjob"
-#elif defined HAVE_LIBNRT
+#if defined HAVE_LIBNRT
 #  define DEFAULT_LAUNCH_TYPE         "launch/poe"
 #elif defined HAVE_ALPS_CRAY && defined HAVE_REAL_CRAY
 #  define DEFAULT_LAUNCH_TYPE         "launch/aprun"
@@ -125,6 +123,7 @@ extern uint16_t drop_priv_flag;
 #endif
 
 #define DEFAULT_MAIL_PROG           "/bin/mail"
+#define DEFAULT_MAIL_PROG_ALT       "/usr/bin/mail"
 #define DEFAULT_MAX_ARRAY_SIZE      1001
 #define DEFAULT_MAX_JOB_COUNT       10000
 #define DEFAULT_MAX_JOB_ID          0x03ff0000
@@ -157,9 +156,7 @@ extern uint16_t drop_priv_flag;
 #define DEFAULT_SCHED_LOG_LEVEL     0
 #define DEFAULT_SCHED_TIME_SLICE    30
 #define DEFAULT_SCHEDTYPE           "sched/backfill"
-#ifdef HAVE_BG	/* Blue Gene specific default configuration parameters */
-#  define DEFAULT_SELECT_TYPE       "select/bluegene"
-#elif defined HAVE_ALPS_CRAY
+#if defined HAVE_ALPS_CRAY
 #  define DEFAULT_SELECT_TYPE       "select/alps"
 #elif defined HAVE_NATIVE_CRAY
 #  define DEFAULT_SELECT_TYPE       "select/cray"

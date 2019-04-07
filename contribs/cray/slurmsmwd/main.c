@@ -174,7 +174,7 @@ static void *_process_data(void *arg)
 	while (!stop_running) {
 		slurm_mutex_lock(&down_node_lock);
 		if (n_down_node > 0) {
-			slurm_info("down node cnt: %lu", n_down_node);
+			slurm_info("down node cnt: %zu", n_down_node);
 			_mark_nodes_down();
 			n_down_node = 0;
 		}
@@ -236,8 +236,10 @@ static void _send_failed_nodes(char *nodelist)
 	while ((ptr = strtok_r(search, " ", &svptr))) {
 		search = NULL;
 
-		while (*ptr == ':')
-			ptr++;
+		ptr = strrchr(ptr, ':');
+		if (!ptr)
+			continue;
+		ptr++;
 
 		ptr = _trim(ptr);
 

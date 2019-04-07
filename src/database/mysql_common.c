@@ -542,7 +542,6 @@ static int _mysql_make_table_current(mysql_conn_t *mysql_conn, char *table_name,
 /* NOTE: Ensure that mysql_conn->lock is set on function entry */
 static int _create_db(char *db_name, mysql_db_info_t *db_info)
 {
-	char create_line[50];
 	MYSQL *mysql_db = NULL;
 	int rc = SLURM_ERROR;
 
@@ -573,13 +572,14 @@ static int _create_db(char *db_name, mysql_db_info_t *db_info)
 		}
 
 		if (db_ptr) {
-			snprintf(create_line, sizeof(create_line),
-				 "create database %s", db_name);
+			char *create_line = NULL;
+			xstrfmtcat(create_line, "create database %s", db_name);
 			if (mysql_query(mysql_db, create_line)) {
-				fatal("mysql_real_query failed: %d %s\n%s",
+				fatal("mysql_query failed: %d %s\n%s",
 				      mysql_errno(mysql_db),
 				      mysql_error(mysql_db), create_line);
 			}
+			xfree(create_line);
 			if (mysql_thread_safe())
 				mysql_thread_end();
 			mysql_close(mysql_db);
@@ -703,6 +703,8 @@ extern int mysql_db_get_db_connection(mysql_conn_t *mysql_conn, char *db_name,
 		mysql_options(mysql_conn->db_conn, MYSQL_OPT_CONNECT_TIMEOUT,
 			      (char *)&my_timeout);
 		while (!storage_init) {
+			debug2("Attempting to connect to %s:%d", db_host,
+			       db_info->port);
 			if (!mysql_real_connect(mysql_conn->db_conn, db_host,
 					        db_info->user, db_info->pass,
 					        db_name, db_info->port, NULL,
@@ -715,15 +717,17 @@ extern int mysql_db_get_db_connection(mysql_conn_t *mysql_conn, char *db_name,
 				} else {
 					const char *err_str = mysql_error(
 						mysql_conn->db_conn);
-					error("mysql_real_connect failed: "
-					      "%d %s",
-					      err, err_str);
 					if ((db_host == db_info->host)
 					    && db_info->backup) {
+						debug2("mysql_real_connect failed: %d %s",
+						       err, err_str);
 						db_host = db_info->backup;
 						continue;
 					}
 
+					error("mysql_real_connect failed: "
+					      "%d %s",
+					      err, err_str);
 					rc = ESLURM_DB_CONNECTION;
 					mysql_close(mysql_conn->db_conn);
 					mysql_conn->db_conn = NULL;

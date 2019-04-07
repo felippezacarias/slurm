@@ -1587,7 +1587,7 @@ static void _update_all_node_features(
 	 */
 	for (i = 0, node_ptr = node_record_table_ptr; i < node_record_count;
 	     i++, node_ptr++) {
-		if (bit_test(knl_node_bitmap, i)) {
+		if (knl_node_bitmap && bit_test(knl_node_bitmap, i)) {
 			if (validate_mode)
 				_validate_node_features(node_ptr);
 			continue;
@@ -2573,7 +2573,8 @@ static int _update_node_state(char *node_list, bool set_locks)
 		time_t now = time(NULL);
 		for (i = 0, node_ptr = node_record_table_ptr;
 		     i < node_record_count; i++, node_ptr++) {
-			if (node_ptr->last_response > now) {
+			if ((node_ptr->last_response > now) &&
+			    IS_NODE_NO_RESPOND(node_ptr)) {
 				/*
 				 * Reboot likely in progress.
 				 * Preserve active KNL features and merge
@@ -2732,6 +2733,18 @@ extern bitstr_t *node_features_p_get_node_bitmap(void)
 	if (knl_node_bitmap)
 		return bit_copy(knl_node_bitmap);
 	return NULL;
+}
+
+/* Return count of overlaping bits in active_bitmap and knl_node_bitmap */
+extern int node_features_p_overlap(bitstr_t *active_bitmap)
+{
+	int cnt = 0;
+
+	if (!knl_node_bitmap || !active_bitmap ||
+	    !(cnt = bit_overlap(active_bitmap, knl_node_bitmap)))
+		return 0;
+
+	return cnt;
 }
 
 /* Return true if the plugin requires PowerSave mode for booting nodes */

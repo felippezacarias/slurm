@@ -144,6 +144,15 @@ array set mod_part_qos {
 
 print_header $test_id
 
+#
+# Cannot run the test if OverTimeLimit is set, since we test time limits.
+#
+set overtimelim [get_over_time_limit]
+if {$overtimelim != 0} {
+	log_warn "Cannot run this test when OverTimeLimit is set. Exiting now."
+	exit 0
+}
+
 proc cleanup { } {
 
 	global acct job_qos part_qos scontrol sacctmgr test_part def_part
@@ -328,25 +337,7 @@ if {$got_node != 1} {
 }
 
 # Get the number of cpus on a node
-
-spawn $scontrol show node $test_node
-expect {
-	-re "CPUTot=($number)" {
-		set totcpus $expect_out(1,string)
-		exp_continue
-	}
-	-re "ThreadsPerCore=($number)" {
-		set nthreads $expect_out(1,string)
-		exp_continue
-	}
-	timeout {
-		send_user "\nFAILURE: scontrol is not responding\n"
-		set exit_code 1
-	}
-	eof {
-		wait
-	}
-}
+lassign [get_node_cpus $test_node] totcpus nthreads
 
 if {$totcpus == 0} {
 	send_user "\nFAILURE: no cpus where found\n"

@@ -718,7 +718,7 @@ static int _handle_init_msg(slurmdbd_conn_t *slurmdbd_conn,
 	   avoid such a slow down.
 	*/
 	slurmdbd_conn->db_conn = acct_storage_g_get_connection(
-		false, slurmdbd_conn->conn->fd, true,
+		NULL, slurmdbd_conn->conn->fd, NULL, true,
 		slurmdbd_conn->conn->cluster_name);
 	slurmdbd_conn->conn->version = init_msg->version;
 	if (errno)
@@ -755,8 +755,10 @@ static int _unpack_persist_init(slurmdbd_conn_t *slurmdbd_conn,
 	if (rc != SLURM_SUCCESS)
 		comment = slurm_strerror(rc);
 
-	*out_buffer = slurm_persist_make_rc_msg(slurmdbd_conn->conn,
-						rc, comment, req_msg->version);
+	*out_buffer = slurm_persist_make_rc_msg_flags(
+		slurmdbd_conn->conn, rc, comment,
+		slurmdbd_conf->persist_conn_rc_flags,
+		req_msg->version);
 
 	return rc;
 }
@@ -862,7 +864,7 @@ static int _add_assocs(slurmdbd_conn_t *slurmdbd_conn,
 		memset(&user, 0, sizeof(slurmdb_user_rec_t));
 		user.uid = *uid;
 		if (assoc_mgr_fill_in_user(
-			    slurmdbd_conn->db_conn, &user, 1, NULL)
+			    slurmdbd_conn->db_conn, &user, 1, NULL, false)
 		    != SLURM_SUCCESS) {
 			comment = "Your user has not been added to the accounting system yet.";
 			error("CONN:%u %s", slurmdbd_conn->conn->fd, comment);
@@ -1423,7 +1425,7 @@ static int _get_jobs_cond(slurmdbd_conn_t *slurmdbd_conn,
 	debug2("DBD_GET_JOBS_COND: called");
 
 	/* fail early if too wide a query */
-	if (!_validate_slurm_user(*uid)
+	if (!job_cond->step_list && !_validate_slurm_user(*uid)
 	    && (slurmdbd_conf->max_time_range != INFINITE)) {
 		time_t start, end;
 

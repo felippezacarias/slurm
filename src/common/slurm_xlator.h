@@ -358,18 +358,21 @@
 #define node_state_string_compact slurm_node_state_string_compact
 #define private_data_string	slurm_private_data_string
 #define accounting_enforce_string slurm_accounting_enforce_string
-#define conn_type_string	slurm_conn_type_string
 #define node_use_string		slurm_node_use_string
-#define bg_block_state_string	slurm_bg_block_state_string
 #define reservation_flags_string slurm_reservation_flags_string
 #define print_multi_line_string slurm_print_multi_line_string
 
 /* slurmdbd_defs.[ch] functions */
 #define slurmdbd_defs_init      slurm_slurmdbd_defs_init
 #define slurmdbd_defs_fini      slurm_slurmdbd_defs_fini
+#define slurmdbd_free_buffer	slurm_slurmdbd_free_buffer
 #define slurmdbd_free_list_msg	slurm_slurmdbd_free_list_msg
 #define slurmdbd_free_usage_msg slurm_slurmdbd_free_usage_msg
 #define slurmdbd_free_id_rc_msg slurm_slurmdbd_free_id_rc_msg
+
+/* slurmdbd_pack.[ch] functions */
+#define pack_slurmdbd_msg	slurm_pack_slurmdbd_msg
+#define unpack_slurmdbd_msg	slurm_unpack_slurmdbd_msg
 
 /* plugin.[ch] functions */
 #define plugin_get_syms         slurm_plugin_get_syms
@@ -389,9 +392,6 @@
 #define jobacctinfo_unpack	slurm_jobacctinfo_unpack
 #define jobacctinfo_create      slurm_jobacctinfo_create
 #define jobacctinfo_destroy     slurm_jobacctinfo_destroy
-
-/* node_select.[ch] functions */
-#define destroy_select_ba_request	slurm_destroy_select_ba_request
 
 /* parse_config.[ch] functions */
 #define s_p_hashtbl_create	slurm_s_p_hashtbl_create

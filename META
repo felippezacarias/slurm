@@ -7,11 +7,9 @@
   Name:		slurm
   Major:	18
   Minor:	08
-  Micro:	0
-  Version:	18.08.0
-  Release:	0pre1
-
-# Include leading zero for all pre-releases
+  Micro:	6
+  Version:	18.08.6
+  Release:	2
 
 ##
 #  When making a new Major/Minor version update

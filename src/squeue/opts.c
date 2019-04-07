@@ -1440,6 +1440,11 @@ extern int parse_long_format( char* format_long )
 							 right_justify,
 							 suffix );
 
+			else if (!xstrcasecmp(token, "accruetime"))
+				job_format_add_accrue_time(params.format_list,
+							   field_size,
+							   right_justify,
+							   suffix);
 			else if (!xstrcasecmp(token, "allocnodes"))
 				job_format_add_alloc_nodes( params.format_list,
 							    field_size,
@@ -1748,7 +1753,7 @@ _get_prefix( char *token )
  * OUT field - the letter code for the data type
  * OUT field_size - byte count
  * OUT right_justify - true of field to be right justified
- * OUT suffix - string containing everthing after the field specification
+ * OUT suffix - string containing everything after the field specification
  */
 static void
 _parse_token( char *token, char *field, int *field_size, bool *right_justify,

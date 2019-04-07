@@ -47,13 +47,13 @@
 
 /*
  * srun_allocate - notify srun of a resource allocation
- * IN job_id - id of the job allocated resource
+ * IN job_ptr - job allocated resources
  */
-extern void srun_allocate (uint32_t job_id);
+extern void srun_allocate(struct job_record *job_ptr);
 
 /*
  * srun_allocate_abort - notify srun of a resource allocation failure
- * IN job_id - id of the job allocated resource
+ * IN job_ptr - job allocated resources
  */
 extern void srun_allocate_abort(struct job_record *job_ptr);
 
@@ -105,10 +105,10 @@ extern void srun_step_signal (struct step_record *step_ptr, uint16_t signal);
 
 /*
  * srun_node_fail - notify srun of a node's failure
- * IN job_id    - id of job to notify
+ * IN job_ptr - job to notify
  * IN node_name - name of failed node
  */
-extern void srun_node_fail (uint32_t job_id, char *node_name);
+extern void srun_node_fail(struct job_record *job_ptr, char *node_name);
 
 /* srun_ping - ping all srun commands that have not been heard from recently */
 extern void srun_ping (void);

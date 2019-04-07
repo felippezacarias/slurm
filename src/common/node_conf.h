@@ -63,7 +63,7 @@ struct config_record {
 	char *cpu_spec_list;	/* arbitrary list of specialized cpus */
 	uint16_t boards;	/* count of boards configured */
 	uint16_t sockets;	/* number of sockets per node */
-	uint16_t cores;		/* number of cores per CPU */
+	uint16_t cores;		/* number of cores per socket */
 	uint16_t core_spec_cnt;	/* number of specialized cores */
 	uint32_t cpu_bind;	/* default CPU binding type */
 	uint16_t threads;	/* number of threads per core */
@@ -86,6 +86,7 @@ extern List front_end_list;	/* list of slurm_conf_frontend_t entries */
 struct node_record {
 	uint32_t magic;			/* magic cookie for data integrity */
 	char *name;			/* name of the node. NULL==defunct */
+	uint32_t next_state;		/* state after reboot */
 	char *node_hostname;		/* hostname of the node */
 	uint32_t node_state;		/* enum node_states, ORed with
 					 * NODE_STATE_NO_RESPOND if not
@@ -102,7 +103,7 @@ struct node_record {
 	uint16_t cpus;			/* count of processors on the node */
 	uint16_t boards; 		/* count of boards configured */
 	uint16_t sockets;		/* number of sockets per node */
-	uint16_t cores;			/* number of cores per CPU */
+	uint16_t cores;			/* number of cores per socket */
 	char *cpu_spec_list;		/* node's specialized cpus */
 	uint16_t core_spec_cnt;		/* number of specialized cores on node*/
 	uint16_t threads;		/* number of threads per core */
@@ -138,6 +139,8 @@ struct node_record {
 					 * use for scheduling purposes */
 	List gres_list;			/* list of gres state info managed by
 					 * plugins */
+	uint64_t sched_weight;		/* Node's weight for scheduling
+					 * purposes. For cons_tres use */
 	uint32_t weight;		/* orignal weight, used only for state
 					 * save/restore, DO NOT use for
 					 * scheduling purposes. */

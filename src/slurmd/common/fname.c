@@ -81,7 +81,7 @@ extern char *fname_create(stepd_step_rec_t *job, const char *format, int taskid)
 		return (xstrdup ("/dev/null"));
 
 	orig = xstrdup(format);
-	esc = is_path_escaped(orig);
+	esc = remove_path_slashes(orig);
 
 	/* If format doesn't specify an absolute pathname, use cwd
 	 */
@@ -124,7 +124,7 @@ extern char *fname_create2(batch_job_launch_msg_t *req)
 		orig = xstrdup(req->std_out);
 	else
 		xstrfmtcat(orig, "slurm-%u.out", req->job_id);
-	esc = is_path_escaped(orig);
+	esc = remove_path_slashes(orig);
 
 	/* If format doesn't specify an absolute pathname, use cwd
 	 */
@@ -385,15 +385,14 @@ extern int fname_single_task_io (const char *fmt)
 	return -1;
 }
 
-/* is_path_escaped()
+/* remove_path_slashes()
  *
- * If there are \ chars in the path strip them.
- * The new path will tell the caller not to
- * translate escaped characters.
+ * If there are \ chars in the path strip the escaping ones.
+ * The new path will tell the caller not to translate escaped characters.
  */
-extern char *is_path_escaped(char *p)
+extern char *remove_path_slashes(char *p)
 {
-	char *buf;
+	char *buf, *pp;
 	bool t;
 	int i;
 
@@ -404,20 +403,31 @@ extern char *is_path_escaped(char *p)
 	t = false;
 	i = 0;
 
+	pp = p;
+	++pp;
 	while (*p) {
-		if (*p == '\\') {
+		if (*p == '\\' && *pp == '\\') {
+			t = true;
+			buf[i] = *pp;
+			++i;
+			p = p + 2;
+			pp = pp + 2;
+		} else if (*p == '\\') {
 			t = true;
 			++p;
-			continue;
+			++pp;
+		} else {
+			buf[i] = *p;
+			++i;
+			++p;
+			++pp;
 		}
-		buf[i] = *p;
-		++i;
-		++p;
 	}
 
 	if (t == false) {
 		xfree(buf);
 		return NULL;
 	}
+
 	return buf;
 }

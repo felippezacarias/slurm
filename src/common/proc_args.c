@@ -455,117 +455,6 @@ extern char *format_task_dist_states(task_dist_states_t t)
 	}
 }
 
-static uint16_t _get_conn_type(char *arg, bool bgp)
-{
-	uint16_t len = strlen(arg);
-	if (!len) {
-		/* no input given */
-		error("no conn-type argument given.");
-		return NO_VAL16;
-	} else if (!xstrncasecmp(arg, "MESH", len))
-		return SELECT_MESH;
-	else if (!xstrncasecmp(arg, "TORUS", len))
-		return SELECT_TORUS;
-	else if (!xstrncasecmp(arg, "NAV", len))
-		return SELECT_NAV;
-	else if (!xstrncasecmp(arg, "SMALL", len))
-		return SELECT_SMALL;
-	else if (bgp) {
-		if (!xstrncasecmp(arg, "HTC", len) ||
-		    !xstrncasecmp(arg, "HTC_S", len))
-			return SELECT_HTC_S;
-		else if (!xstrncasecmp(arg, "HTC_D", len))
-			return SELECT_HTC_D;
-		else if (!xstrncasecmp(arg, "HTC_V", len))
-			return SELECT_HTC_V;
-		else if (!xstrncasecmp(arg, "HTC_L", len))
-			return SELECT_HTC_L;
-	}
-
-	error("invalid conn-type argument '%s' ignored.", arg);
-	return NO_VAL16;
-}
-
-/*
- * verify comma separated list of connection types to array of uint16_t
- * connection_types or NO_VAL if not recognized
- */
-extern void verify_conn_type(const char *arg, uint16_t *conn_type)
-{
-	bool got_bgp = 0;
-	int inx = 0;
-	int highest_dims = 1;
-	char *arg_tmp = xstrdup(arg), *tok, *save_ptr = NULL;
-
-	if (working_cluster_rec) {
-		if (working_cluster_rec->flags & CLUSTER_FLAG_BGQ)
-			highest_dims = 4;
-	} else {
-#if defined HAVE_BGQ
-		highest_dims = 4;
-#endif
-	}
-
-	tok = strtok_r(arg_tmp, ",", &save_ptr);
-	while (tok) {
-		if (inx >= highest_dims) {
-			error("too many conn-type arguments: %s", arg);
-			break;
-		}
-		conn_type[inx++] = _get_conn_type(tok, got_bgp);
-		tok = strtok_r(NULL, ",", &save_ptr);
-	}
-	if (inx == 0)
-		error("invalid conn-type argument '%s' ignored.", arg);
-	/* Fill the rest in with NO_VALS (use HIGHEST_DIMS here
-	 * instead of highest_dims since that is the size of the
-	 * array. */
-	for ( ; inx < HIGHEST_DIMENSIONS; inx++) {
-		conn_type[inx] = NO_VAL16;
-	}
-
-	xfree(arg_tmp);
-}
-
-/*
- * verify geometry arguments, must have proper count
- * returns -1 on error, 0 otherwise
- */
-int verify_geometry(const char *arg, uint16_t *geometry)
-{
-	char* token, *delimiter = ",x", *next_ptr;
-	int i, rc = 0;
-	char* geometry_tmp = xstrdup(arg);
-	char* original_ptr = geometry_tmp;
-	int dims = slurmdb_setup_cluster_dims();
-
-	token = strtok_r(geometry_tmp, delimiter, &next_ptr);
-	for (i=0; i<dims; i++) {
-		if (token == NULL) {
-			error("insufficient dimensions in --geometry");
-			rc = -1;
-			break;
-		}
-		geometry[i] = (uint16_t)atoi(token);
-		if (geometry[i] == 0 || geometry[i] == NO_VAL16) {
-			error("invalid --geometry argument");
-			rc = -1;
-			break;
-		}
-		geometry_tmp = next_ptr;
-		token = strtok_r(geometry_tmp, delimiter, &next_ptr);
-	}
-	if (token != NULL) {
-		error("too many dimensions in --geometry");
-		rc = -1;
-	}
-
-	if (original_ptr)
-		xfree(original_ptr);
-
-	return rc;
-}
-
 /* return command name from its full path name */
 char * base_name(char* command)
 {
@@ -1136,61 +1025,81 @@ _create_path_list(void)
 }
 
 /*
+ * Check a specific path to see if the executable exists and is not a directory
+ * IN path - path of executable to check
+ * RET true if path exists and is not a directory; false otherwise
+ */
+static bool _exists(const char *path)
+{
+	struct stat st;
+        if (stat(path, &st)) {
+		debug2("_check_exec: failed to stat path %s", path);
+		return false;
+	}
+	if (S_ISDIR(st.st_mode)) {
+		debug2("_check_exec: path %s is a directory", path);
+		return false;
+	}
+	return true;
+}
+
+/*
+ * Check a specific path to see if the executable is accessible
+ * IN path - path of executable to check
+ * IN access_mode - determine if executable is accessible to caller with
+ *		    specified mode
+ * RET true if path is accessible according to access mode, false otherwise
+ */
+static bool _accessible(const char *path, int access_mode)
+{
+	if (access(path, access_mode)) {
+		debug2("_check_exec: path %s is not accessible", path);
+		return false;
+	}
+	return true;
+}
+
+/*
  * search PATH to confirm the location and access mode of the given command
  * IN cwd - current working directory
  * IN cmd - command to execute
- * IN check_current_dir - if true, search cwd for the command
+ * IN check_cwd_last - if true, search cwd after PATH is checked
+ *                   - if false, search cwd for the command first
  * IN access_mode - required access rights of cmd
  * IN test_exec - if false, do not confirm access mode of cmd if full path
  * RET full path of cmd or NULL if not found
  */
-char *search_path(char *cwd, char *cmd, bool check_current_dir, int access_mode,
+char *search_path(char *cwd, char *cmd, bool check_cwd_last, int access_mode,
 		  bool test_exec)
 {
 	List         l        = NULL;
 	ListIterator i        = NULL;
 	char *path, *fullpath = NULL;
 
-#if defined HAVE_BG
-	/* BGQ's runjob command requires always a fully qualified path */
-	/* Relative path */
-	if (cmd[0] == '.') {
-		char *cmd1 = xstrdup_printf("%s/%s", cwd, cmd);
-		if (access(cmd1, access_mode) == 0)
-			xstrcat(fullpath, cmd1);
-		xfree(cmd1);
-		goto done;
-	}
-	/* Absolute path */
-	if (cmd[0] == '/') {
-		if (access(cmd, access_mode) == 0)
-			xstrcat(fullpath, cmd);
-		goto done;
-	}
-#else
 	/* Relative path */
 	if (cmd[0] == '.') {
 		if (test_exec) {
 			char *cmd1 = xstrdup_printf("%s/%s", cwd, cmd);
-			if (access(cmd1, access_mode) == 0)
-				xstrcat(fullpath, cmd1);
+			if (_exists(cmd1) && _accessible(cmd1, access_mode))
+				fullpath = xstrdup(cmd1);
 			xfree(cmd1);
 		}
-		goto done;
+		return fullpath;
 	}
 	/* Absolute path */
 	if (cmd[0] == '/') {
-		if (test_exec && (access(cmd, access_mode) == 0))
-			xstrcat(fullpath, cmd);
-		goto done;
+		if (test_exec && _exists(cmd) && _accessible(cmd, access_mode))
+			fullpath = xstrdup(cmd);
+		return fullpath;
 	}
-#endif
 	/* Otherwise search in PATH */
 	l = _create_path_list();
 	if (l == NULL)
 		return NULL;
 
-	if (check_current_dir)
+	if (check_cwd_last)
+		list_append(l, xstrdup(cwd));
+	else
 		list_prepend(l, xstrdup(cwd));
 
 	i = list_iterator_create(l);
@@ -1199,13 +1108,16 @@ char *search_path(char *cwd, char *cmd, bool check_current_dir, int access_mode,
 			xstrfmtcat(fullpath, "%s/%s/%s", cwd, path, cmd);
 		else
 			xstrfmtcat(fullpath, "%s/%s", path, cmd);
-
-		if (access(fullpath, access_mode) == 0)
-			goto done;
-
+		/* Use first executable found in PATH */
+		if (_exists(fullpath)) {
+			if (!test_exec)
+				break;
+			if (_accessible(path, access_mode))
+				break;
+		}
 		xfree(fullpath);
 	}
-done:
+	list_iterator_destroy(i);
 	FREE_NULL_LIST(l);
 	return fullpath;
 }
@@ -1491,208 +1403,6 @@ void print_db_notok(const char *cname, bool isenv)
 		      "or it is an invalid entry for %s.  "
 		      "Use 'sacctmgr list clusters' to see available clusters.",
 		      cname, isenv ? "SLURM_CLUSTERS" : "--cluster");
-}
-
-static bool _check_is_pow_of_2(int32_t n) {
-	/* Bitwise ANDing a power of 2 number like 16 with its
-	 * negative (-16) gives itself back.  Only integers which are power of
-	 * 2 behave like that.
-	 */
-	return ((n!=0) && (n&(-n))==n);
-}
-
-extern void bg_figure_nodes_tasks(int *min_nodes, int *max_nodes,
-				  int *ntasks_per_node, bool *ntasks_set,
-				  int *ntasks, bool nodes_set,
-				  bool nodes_set_opt, bool overcommit,
-				  bool set_tasks)
-{
-	/* BGQ has certain restrictions to run a job.  So lets validate
-	 * and correct what the user asked for if possible.
-	 */
-	int32_t node_cnt;
-	bool figured = false;
-	uint32_t cluster_flags = slurmdb_setup_cluster_flags();
-
-	if (!(cluster_flags & CLUSTER_FLAG_BGQ))
-		fatal("bg_figure_nodes_tasks is only valid on a BGQ system.");
-
-	if (!(*ntasks_set)
-	    && (*ntasks_per_node) && (*ntasks_per_node != NO_VAL)) {
-		if ((*ntasks_per_node != 1)
-		    && (*ntasks_per_node != 2)
-		    && (*ntasks_per_node != 4)
-		    && (*ntasks_per_node != 8)
-		    && (*ntasks_per_node != 16)
-		    && (*ntasks_per_node != 32)
-		    && (*ntasks_per_node != 64))
-			fatal("You requested --ntasks-per-node=%d, "
-			      "which is not valid, it must be a power of 2.  "
-			      "Please validate your request and try again.",
-			      *ntasks_per_node);
-		else if (!overcommit
-			 && ((*ntasks_per_node == 32)
-			     || (*ntasks_per_node == 64)))
-			fatal("You requested --ntasks-per-node=%d, "
-			      "which is not valid without --overcommit.",
-			      *ntasks_per_node);
-	}
-
-	if (*max_nodes)
-		node_cnt = *max_nodes;
-	else
-		node_cnt = *min_nodes;
-
-	if (*ntasks_set) {
-		int32_t ntpn;
-
-		if (nodes_set) {
-			if (node_cnt > *ntasks) {
-				if (nodes_set_opt)
-					info("You asked for %d nodes, "
-					     "but only %d tasks, resetting "
-					     "node count to %u.",
-					     node_cnt, *ntasks, *ntasks);
-				*max_nodes = *min_nodes = node_cnt
-					= *ntasks;
-			}
-		}
-		/* If nodes not set do not try to set min/max nodes
-		   yet since that would result in an incorrect
-		   allocation.  For a step allocation it is figured
-		   out later in srun_job.c _job_create_structure().
-		*/
-
-		if ((!*ntasks_per_node || (*ntasks_per_node == NO_VAL))) {
-			/* We always want the next larger number if
-			   there is a fraction so we try to stay in
-			   the allocation requested.
-			*/
-			*ntasks_per_node =
-				(*ntasks + node_cnt - 1) / node_cnt;
-			figured = true;
-		}
-
-		/* On a Q we need ntasks_per_node to be a multiple of 2 */
-		ntpn = *ntasks_per_node;
-		while (!_check_is_pow_of_2(ntpn))
-			ntpn++;
-		if (!figured && ntpn > 64)
-			fatal("You requested --ntasks-per-node=%d, "
-			      "which is not a power of 2.  But the next "
-			      "largest power of 2 (%d) is greater than the "
-			      "largest valid power which is 64.  Please "
-			      "validate your request and try again.",
-			      *ntasks_per_node, ntpn);
-		if (!figured && (ntpn != *ntasks_per_node)) {
-			info("You requested --ntasks-per-node=%d, which is not "
-			     "a power of 2.  Setting --ntasks-per-node=%d "
-			     "for you.", *ntasks_per_node, ntpn);
-			figured = true;
-		}
-		*ntasks_per_node = ntpn;
-
-		/* We always want the next larger number if
-		   there is a fraction so we try to stay in
-		   the allocation requested.
-		*/
-		ntpn = ((*ntasks) + (*ntasks_per_node) - 1)
-			/ (*ntasks_per_node);
-		/* Make sure we are requesting the correct number of nodes. */
-		if (node_cnt < ntpn) {
-			*max_nodes = *min_nodes = ntpn;
-			if (nodes_set && !figured) {
-				fatal("You requested -N %d and -n %d "
-				      "with --ntasks-per-node=%d.  "
-				      "This isn't a valid request.",
-				      node_cnt, *ntasks,
-				      *ntasks_per_node);
-			}
-			node_cnt = *max_nodes;
-		}
-
-		/* Do this again to make sure we have a legitimate
-		   ratio. */
-		ntpn = *ntasks_per_node;
-		if ((node_cnt * ntpn) < *ntasks) {
-			ntpn++;
-			while (!_check_is_pow_of_2(ntpn))
-				ntpn++;
-			if (!figured && (ntpn != *ntasks_per_node))
-				info("You requested --ntasks-per-node=%d, "
-				     "which cannot spread across %d nodes "
-				     "correctly.  Setting --ntasks-per-node=%d "
-				     "for you.",
-				     *ntasks_per_node, node_cnt, ntpn);
-			*ntasks_per_node = ntpn;
-		} else if (!overcommit && ((node_cnt * ntpn) > *ntasks)) {
-			ntpn = (*ntasks + node_cnt - 1) / node_cnt;
-			while (!_check_is_pow_of_2(ntpn))
-				ntpn++;
-			if (!figured && (ntpn != *ntasks_per_node))
-				info("You requested --ntasks-per-node=%d, "
-				     "which is more than the tasks you "
-				     "requested.  Setting --ntasks-per-node=%d "
-				     "for you.",
-				     *ntasks_per_node, ntpn);
-			*ntasks_per_node = ntpn;
-		}
-	} else if (set_tasks) {
-		if (*ntasks_per_node && (*ntasks_per_node != NO_VAL))
-			*ntasks = node_cnt * (*ntasks_per_node);
-		else {
-			*ntasks = node_cnt;
-			*ntasks_per_node = 1;
-		}
-		*ntasks_set = true;
-	}
-
-	/* If set_tasks isn't set we are coming in for the
-	   allocation so verify it will work first before we
-	   go any futher.
-	*/
-	if (nodes_set && (*ntasks_per_node && (*ntasks_per_node != NO_VAL))) {
-		if ((*ntasks_per_node != 1)
-		    && (*ntasks_per_node != 2)
-		    && (*ntasks_per_node != 4)
-		    && (*ntasks_per_node != 8)
-		    && (*ntasks_per_node != 16)
-		    && (*ntasks_per_node != 32)
-		    && (*ntasks_per_node != 64)) {
-			if (*ntasks_set)
-				fatal("You requested -N %d and -n %d "
-				      "which gives --ntasks-per-node=%d.  "
-				      "This isn't a valid request.",
-				      node_cnt, *ntasks,
-				      *ntasks_per_node);
-			else
-				fatal("You requested -N %d and "
-				      "--ntasks-per-node=%d.  "
-				      "This isn't a valid request.",
-				      node_cnt, *ntasks_per_node);
-		} else if (!overcommit
-			 && ((*ntasks_per_node == 32)
-			     || (*ntasks_per_node == 64))) {
-			if (*ntasks_set)
-				fatal("You requested -N %d and -n %d "
-				      "which gives --ntasks-per-node=%d.  "
-				      "This isn't a valid request "
-				      "without --overcommit.",
-				      node_cnt, *ntasks,
-				      *ntasks_per_node);
-			else
-				fatal("You requested -N %d and "
-				      "--ntasks-per-node=%d.  "
-				      "This isn't a valid request "
-				      "without --overcommit.",
-				      node_cnt, *ntasks_per_node);
-		}
-	}
-
-	/* If we aren't setting tasks reset ntasks_per_node as well. */
-	if (!set_tasks && figured)
-		*ntasks_per_node = 0;
-
 }
 
 /*

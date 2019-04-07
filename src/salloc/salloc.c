@@ -74,10 +74,7 @@
 #include "src/salloc/salloc.h"
 #include "src/salloc/opt.h"
 
-#ifdef HAVE_BG
-#include "src/common/node_select.h"
-#include "src/plugins/select/bluegene/bg_enums.h"
-#elif defined(HAVE_ALPS_CRAY)
+#if defined(HAVE_ALPS_CRAY)
 #include "src/common/node_select.h"
 
 #ifdef HAVE_REAL_CRAY
@@ -137,14 +134,7 @@ static void _set_submit_dir_env(void);
 static void _signal_while_allocating(int signo);
 static void _timeout_handler(srun_timeout_msg_t *msg);
 static void _user_msg_handler(srun_user_msg_t *msg);
-
-#ifdef HAVE_BG
-static int _wait_bluegene_block_ready(
-			resource_allocation_response_msg_t *alloc);
-static int _blocks_dealloc(void);
-#else
 static int _wait_nodes_ready(resource_allocation_response_msg_t *alloc);
-#endif
 
 bool salloc_shutdown = false;
 /* Signals that are considered terminal before resource allocation. */
@@ -182,7 +172,7 @@ int main(int argc, char **argv)
 	List job_req_list = NULL, job_resp_list = NULL;
 	resource_allocation_response_msg_t *alloc = NULL;
 	time_t before, after;
-	allocation_msg_thread_t *msg_thr;
+	allocation_msg_thread_t *msg_thr = NULL;
 	char **env = NULL, *cluster_name;
 	int status = 0;
 	int retries = 0;
@@ -386,9 +376,16 @@ int main(int argc, char **argv)
 	callbacks.job_suspend = _job_suspend_handler;
 	callbacks.user_msg = _user_msg_handler;
 	callbacks.node_fail = _node_fail_handler;
-	/* create message thread to handle pings and such from slurmctld */
-	msg_thr = slurm_allocation_msg_thr_create(&first_job->other_port,
-						  &callbacks);
+	/*
+	 * Create message thread to handle pings and such from slurmctld.
+	 * salloc --no-shell jobs aren't interactive, so they won't respond to
+	 * srun_ping(), so we don't want to kill it after InactiveLimit seconds.
+	 * Not creating this thread will leave other_port == 0, and will
+	 * prevent slurmctld from killing the salloc --no-shell job.
+	 */
+	if (!saopt.no_shell)
+		msg_thr = slurm_allocation_msg_thr_create(&first_job->other_port,
+							  &callbacks);
 
 	/* NOTE: Do not process signals in separate pthread. The signal will
 	 * cause slurm_allocate_resources_blocking() to exit immediately. */
@@ -448,7 +445,8 @@ int main(int argc, char **argv)
 		} else {
 			error("Job submit/allocate failed: %m");
 		}
-		slurm_allocation_msg_thr_destroy(msg_thr);
+		if (msg_thr)
+			slurm_allocation_msg_thr_destroy(msg_thr);
 		exit(error_exit);
 	} else if (job_resp_list && !allocation_interrupted) {
 		/* Allocation granted to regular job */
@@ -519,6 +517,17 @@ int main(int argc, char **argv)
 		while ((desc = (job_desc_msg_t *) list_next(iter_req))) {
 			alloc = (resource_allocation_response_msg_t *)
 				list_next(iter_resp);
+
+			if (alloc && desc &&
+			    (desc->bitflags & JOB_NTASKS_SET)) {
+				if (desc->ntasks_per_node != NO_VAL16)
+					desc->num_tasks =
+						alloc->node_cnt *
+						desc->ntasks_per_node;
+				else if (alloc->node_cnt > desc->num_tasks)
+					desc->num_tasks = alloc->node_cnt;
+			}
+
 			if (env_array_for_job(&env, alloc, desc, i++) !=
 			    SLURM_SUCCESS)
 				goto relinquish;
@@ -526,6 +535,14 @@ int main(int argc, char **argv)
 		list_iterator_destroy(iter_resp);
 		list_iterator_destroy(iter_req);
 	} else {
+		if (alloc && desc && (desc->bitflags & JOB_NTASKS_SET)) {
+			if (desc->ntasks_per_node != NO_VAL16)
+				desc->num_tasks =
+					alloc->node_cnt * desc->ntasks_per_node;
+			else if (alloc->node_cnt > desc->num_tasks)
+				desc->num_tasks = alloc->node_cnt;
+		}
+
 		if (env_array_for_job(&env, alloc, desc, -1) != SLURM_SUCCESS)
 			goto relinquish;
 	}
@@ -622,7 +639,8 @@ relinquish:
 	slurm_mutex_unlock(&allocation_state_lock);
 
 	slurm_free_resource_allocation_response_msg(alloc);
-	slurm_allocation_msg_thr_destroy(msg_thr);
+	if (msg_thr)
+		slurm_allocation_msg_thr_destroy(msg_thr);
 
 	/*
 	 * Figure out what return code we should use.  If the user's command
@@ -675,19 +693,12 @@ static int _proc_alloc(resource_allocation_response_msg_t *alloc)
 			working_cluster_rec->rpc_version);
 	}
 
-#ifdef HAVE_BG
-	if (!_wait_bluegene_block_ready(alloc)) {
-		if (!allocation_interrupted)
-			error("Something is wrong with the boot of the block.");
-		return SLURM_ERROR;
-	}
-#else
 	if (!_wait_nodes_ready(alloc)) {
 		if (!allocation_interrupted)
 			error("Something is wrong with the boot of the nodes.");
 		return SLURM_ERROR;
 	}
-#endif
+
 	return SLURM_SUCCESS;
 }
 
@@ -827,12 +838,13 @@ static int _fill_job_desc_from_opts(job_desc_msg_t *desc)
 	desc->req_nodes = xstrdup(opt.nodelist);
 	desc->exc_nodes = xstrdup(opt.exc_nodes);
 	desc->partition = xstrdup(opt.partition);
-	desc->min_nodes = opt.min_nodes;
 
-	if (opt.max_nodes)
-		desc->max_nodes = opt.max_nodes;
-	else if (opt.nodes_set)
-		desc->max_nodes = opt.min_nodes;
+	if (opt.nodes_set) {
+		desc->min_nodes = opt.min_nodes;
+		if (opt.max_nodes)
+			desc->max_nodes = opt.max_nodes;
+	} else if (opt.ntasks_set && (opt.ntasks == 0))
+		desc->min_nodes = 0;
 
 	desc->user_id = opt.uid;
 	desc->group_id = opt.gid;
@@ -881,27 +893,8 @@ static int _fill_job_desc_from_opts(job_desc_msg_t *desc)
 
 	if (opt.hold)
 		desc->priority     = 0;
-#ifdef HAVE_BG
-	if (opt.geometry[0] > 0) {
-		int i;
-		for (i = 0; i < SYSTEM_DIMENSIONS; i++)
-			desc->geometry[i] = opt.geometry[i];
-	}
-#endif
-	memcpy(desc->conn_type, opt.conn_type, sizeof(desc->conn_type));
-
 	if (opt.reboot)
 		desc->reboot = 1;
-	if (opt.no_rotate)
-		desc->rotate = 0;
-	if (opt.blrtsimage)
-		desc->blrtsimage = xstrdup(opt.blrtsimage);
-	if (opt.linuximage)
-		desc->linuximage = xstrdup(opt.linuximage);
-	if (opt.mloaderimage)
-		desc->mloaderimage = xstrdup(opt.mloaderimage);
-	if (opt.ramdiskimage)
-		desc->ramdiskimage = xstrdup(opt.ramdiskimage);
 
 	/* job constraints */
 	if (opt.pn_min_cpus > -1)
@@ -1231,100 +1224,6 @@ static void _set_rlimits(char **env)
 	}
 }
 
-#ifdef HAVE_BG
-/* returns 1 if job and nodes are ready for job to begin, 0 otherwise */
-static int _wait_bluegene_block_ready(resource_allocation_response_msg_t *alloc)
-{
-	int is_ready = 0, i, rc;
-	char *block_id = NULL;
-	int cur_delay = 0;
-	int max_delay = BG_FREE_PREVIOUS_BLOCK + BG_MIN_BLOCK_BOOT +
-			(BG_INCR_BLOCK_BOOT * alloc->node_cnt);
-
-	select_g_select_jobinfo_get(alloc->select_jobinfo,
-				    SELECT_JOBDATA_BLOCK_ID,
-				    &block_id);
-
-	for (i = 0; (cur_delay < max_delay); i++) {
-		if (i == 1)
-			info("Waiting for block %s to become ready for job",
-			     block_id);
-		if (i) {
-			sleep(POLL_SLEEP);
-			rc = _blocks_dealloc();
-			if ((rc == 0) || (rc == -1))
-				cur_delay += POLL_SLEEP;
-			debug("still waiting");
-		}
-
-		rc = slurm_job_node_ready(alloc->job_id);
-
-		if (rc == READY_JOB_FATAL)
-			break;				/* fatal error */
-		if ((rc == READY_JOB_ERROR) || (rc == EAGAIN))
-			continue;			/* retry */
-		if ((rc & READY_JOB_STATE) == 0)	/* job killed */
-			break;
-		if (rc & READY_NODE_STATE) {		/* job and node ready */
-			is_ready = 1;
-			break;
-		}
-		if (allocation_interrupted || allocation_revoked)
-			break;
-	}
-	if (is_ready)
-     		info("Block %s is ready for job", block_id);
-	else if (!allocation_interrupted)
-		error("Block %s still not ready", block_id);
-	else	/* allocation_interrupted and slurmctld not responing */
-		is_ready = 0;
-
-	xfree(block_id);
-
-	return is_ready;
-}
-
-/*
- * Test if any BG blocks are in deallocating state since they are
- * probably related to this job we will want to sleep longer
- * RET	1:  deallocate in progress
- *	0:  no deallocate in progress
- *     -1: error occurred
- */
-static int _blocks_dealloc(void)
-{
-	static block_info_msg_t *bg_info_ptr = NULL, *new_bg_ptr = NULL;
-	int rc = 0, error_code = 0, i;
-
-	if (bg_info_ptr) {
-		error_code = slurm_load_block_info(bg_info_ptr->last_update,
-						   &new_bg_ptr, SHOW_ALL);
-		if (error_code == SLURM_SUCCESS)
-			slurm_free_block_info_msg(bg_info_ptr);
-		else if (slurm_get_errno() == SLURM_NO_CHANGE_IN_DATA) {
-			error_code = SLURM_SUCCESS;
-			new_bg_ptr = bg_info_ptr;
-		}
-	} else {
-		error_code = slurm_load_block_info((time_t) NULL,
-						   &new_bg_ptr, SHOW_ALL);
-	}
-
-	if (error_code) {
-		error("slurm_load_block_info: %s",
-		      slurm_strerror(slurm_get_errno()));
-		return -1;
-	}
-	for (i = 0; i<new_bg_ptr->record_count; i++) {
-		if (new_bg_ptr->block_array[i].state == BG_BLOCK_TERM) {
-			rc = 1;
-			break;
-		}
-	}
-	bg_info_ptr = new_bg_ptr;
-	return rc;
-}
-#else
 /* returns 1 if job and nodes are ready for job to begin, 0 otherwise */
 static int _wait_nodes_ready(resource_allocation_response_msg_t *alloc)
 {
@@ -1399,4 +1298,3 @@ static int _wait_nodes_ready(resource_allocation_response_msg_t *alloc)
 
 	return is_ready;
 }
-#endif	/* HAVE_BG */

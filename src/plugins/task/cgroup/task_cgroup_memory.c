@@ -34,7 +34,7 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#define _GNU_SOURCE		/* For POLLRDHUP */
+#define _GNU_SOURCE		/* For POLLRDHUP, O_CLOEXEC on older glibc */
 #include <limits.h>
 #include <poll.h>
 #include <signal.h>
@@ -572,7 +572,7 @@ static int _register_oom_notifications(char * cgpath)
 		goto fini;
 	}
 
-	if ((cfd = open(control_file, O_RDONLY)) == -1) {
+	if ((cfd = open(control_file, O_RDONLY | O_CLOEXEC)) == -1) {
 		error("%s: Cannot open %s: %m", __func__, control_file);
 		rc = SLURM_ERROR;
 		goto fini;
@@ -586,13 +586,13 @@ static int _register_oom_notifications(char * cgpath)
 		goto fini;
 	}
 
-	if ((efd = open(event_file, O_WRONLY)) == -1) {
+	if ((efd = open(event_file, O_WRONLY | O_CLOEXEC)) == -1) {
 		error("%s: Cannot open %s: %m", __func__, event_file);
 		rc = SLURM_ERROR;
 		goto fini;
 	}
 
-	if ((event_fd = eventfd(0, 0)) == -1) {
+	if ((event_fd = eventfd(0, EFD_CLOEXEC)) == -1) {
 		error("%s: eventfd: %m", __func__);
 		rc = SLURM_ERROR;
 		goto fini;
@@ -614,7 +614,7 @@ static int _register_oom_notifications(char * cgpath)
 		goto fini;
 	}
 
-	if (pipe(oom_pipe) == -1) {
+	if (pipe2(oom_pipe, O_CLOEXEC) == -1) {
 		error("%s: pipe(): %m", __func__);
 		rc = SLURM_ERROR;
 		goto fini;
@@ -685,7 +685,7 @@ extern int task_cgroup_memory_create(stepd_step_rec_t *job)
 	/* build job cgroup relative path if no set (should not be) */
 	if (*job_cgroup_path == '\0') {
 		if (snprintf(job_cgroup_path,PATH_MAX,"%s/job_%u",
-			      user_cgroup_path,jobid) >= PATH_MAX) {
+			      user_cgroup_path, jobid) >= PATH_MAX) {
 			error("task/cgroup: unable to build job %u memory "
 			      "cg relative path : %m", jobid);
 			return SLURM_ERROR;
@@ -912,7 +912,7 @@ extern int task_cgroup_memory_check_oom(stepd_step_rec_t *job)
 
 	slurm_mutex_lock(&oom_mutex);
 	if (oom_kill_count) {
-		error("Detected %"PRIu64" oom-kill event(s) in step %s cgroup.",
+		error("Detected %"PRIu64" oom-kill event(s) in step %s cgroup. Some of your processes may have been killed by the cgroup out-of-memory handler.",
 		      oom_kill_count, step_str);
 		rc = ENOMEM;
 	}

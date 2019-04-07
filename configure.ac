@@ -28,33 +28,9 @@ AC_CONFIG_HEADERS([slurm/slurm.h])
 
 X_AC_RPATH
 
-dnl This sets the first compiler to be C instead of C++ (which would happen
-dnl if X_AC_BGQ was the first thing called.
+dnl This sets the first compiler to be C instead of C++.
 X_AC_DATABASES
 
-X_AC_BG
-
-dnl This needs to be close to the front to set CFLAGS=-m64, but needs to
-dnl be after something that does a AC_LINK_IFELSE or the compiler configure
-dnl checks for will be C++ instead of C.
-X_AC_BGQ
-
-dnl We need to know if this is a Q system
-AM_CONDITIONAL(BGQ_LOADED, test "x$ac_bgq_loaded" = "xyes")
-AC_SUBST(BGQ_LOADED)
-
-dnl ok now check if We are on a real L or P system, (test if to build srun
-dnl or not.  If we are emulating things we should build it.
-AM_CONDITIONAL(REAL_BGQ_LOADED, test "x$ac_real_bluegene_loaded" = "xyes")
-AC_SUBST(REAL_BGQ_LOADED)
-
-
-dnl ok now check if any bluegene was loaded.
-AM_CONDITIONAL(BLUEGENE_LOADED, test "x$ac_bluegene_loaded" = "xyes")
-AC_SUBST(BLUEGENE_LOADED)
-
-
-dnl
 dnl Check to see if this architecture should use slurm_* prefix function
 dnl aliases for plugins.
 dnl
@@ -166,6 +142,7 @@ AC_PROG_GCC_TRADITIONAL([])
 AX_GCC_BUILTIN(__builtin_clzll)
 AX_GCC_BUILTIN(__builtin_ctzll)
 AX_GCC_BUILTIN(__builtin_popcountll)
+
 
 dnl checks for library functions.
 dnl
@@ -329,15 +306,10 @@ X_AC_MAN2HTML
 AM_CONDITIONAL(HAVE_MAN2HTML, test "x$ac_have_man2html" = "xyes")
 AC_SUBST(HAVE_MAN2HTML)
 
-# Workaround with gcc 7.2 printing a warning about printing NULL's
-# This should be fixed in a future version so we properly protect against
-# *printf handling NULLs
-old_CFLAGS=$CFLAGS
-CFLAGS="$CFLAGS -Wno-format-truncation"
+
 dnl check if we can use standard printf functions
 dnl
 X_AC_PRINTF_NULL
-CFLAGS=$old_CFLAGS
 
 dnl Check for whether to include readline support
 dnl
@@ -438,6 +410,7 @@ AC_CONFIG_FILES([Makefile
 		 contribs/sgather/Makefile
 		 contribs/sgi/Makefile
 		 contribs/sjobexit/Makefile
+		 contribs/pmi/Makefile
 		 contribs/pmi2/Makefile
 		 doc/Makefile
 		 doc/man/Makefile
@@ -498,6 +471,7 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/acct_gather_energy/ibmaem/Makefile
 		 src/plugins/acct_gather_energy/ipmi/Makefile
 		 src/plugins/acct_gather_energy/none/Makefile
+		 src/plugins/acct_gather_energy/xcc/Makefile
 		 src/plugins/acct_gather_interconnect/Makefile
 		 src/plugins/acct_gather_interconnect/ofed/Makefile
 		 src/plugins/acct_gather_interconnect/none/Makefile
@@ -563,7 +537,6 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/launch/Makefile
 		 src/plugins/launch/aprun/Makefile
 		 src/plugins/launch/poe/Makefile
-		 src/plugins/launch/runjob/Makefile
 		 src/plugins/launch/slurm/Makefile
 		 src/plugins/mcs/Makefile
 		 src/plugins/mcs/account/Makefile
@@ -578,7 +551,6 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/power/cray/Makefile
 		 src/plugins/power/none/Makefile
 		 src/plugins/preempt/Makefile
-		 src/plugins/preempt/job_prio/Makefile
 		 src/plugins/preempt/none/Makefile
 		 src/plugins/preempt/partition_prio/Makefile
 		 src/plugins/preempt/qos/Makefile
@@ -604,12 +576,7 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/select/alps/Makefile
 		 src/plugins/select/alps/libalps/Makefile
 		 src/plugins/select/alps/libemulate/Makefile
-		 src/plugins/select/bluegene/Makefile
-		 src/plugins/select/bluegene/ba_bgq/Makefile
-		 src/plugins/select/bluegene/bl_bgq/Makefile
-		 src/plugins/select/bluegene/sfree/Makefile
 		 src/plugins/select/cons_res/Makefile
-		 src/plugins/select/cons_tres/Makefile
 		 src/plugins/select/cray/Makefile
 		 src/plugins/select/linear/Makefile
 		 src/plugins/select/other/Makefile

@@ -193,6 +193,7 @@ static int _get_pss(char *proc_smaps_file, jag_prec_t *prec)
         /* Sanity checks */
 
         if (pss > 0 && prec->tres_data[TRES_ARRAY_MEM].size_read > pss) {
+		pss *= 1024; /* Scale KB to B */
                 prec->tres_data[TRES_ARRAY_MEM].size_read = pss;
         }
 
@@ -364,8 +365,12 @@ static int _get_process_data_line(int in, jag_prec_t *prec) {
 	prec->tres_data[TRES_ARRAY_VMEM].size_read = vsize;
 	prec->tres_data[TRES_ARRAY_MEM].size_read = rss * my_pagesize;
 
-	prec->usec  = (double)utime/(double)hertz;
-	prec->ssec  = (double)stime/(double)hertz;
+	/*
+	 * Store unnormalized times, we will normalize in when
+	 * transfering to a struct jobacctinfo in job_common_poll_data()
+	 */
+	prec->usec = (double)utime;
+	prec->ssec = (double)stime;
 	prec->last_cpu = last_cpu;
 	return 1;
 }
@@ -578,8 +583,6 @@ static void _handle_stats(List prec_list, char *proc_stat_file,
 		_get_process_io_data_line(fd2, prec);
 		fclose(io_fp);
 	}
-	if (callbacks->prec_extra)
-		(*(callbacks->prec_extra))(prec);
 }
 
 static List _get_precs(List task_list, bool pgid_plugin, uint64_t cont_id,
@@ -610,8 +613,14 @@ static List _get_precs(List task_list, bool pgid_plugin, uint64_t cont_id,
 					&jobacct->energy);
 				jobacct->tres_usage_in_tot[TRES_ARRAY_ENERGY] =
 					jobacct->energy.consumed_energy;
-				debug2("getjoules_task energy = %"PRIu64"",
-				       jobacct->energy.consumed_energy);
+				jobacct->tres_usage_out_tot[TRES_ARRAY_ENERGY] =
+					jobacct->energy.current_watts;
+				debug2("%s: energy = %"PRIu64" watts = %"PRIu64,
+				       __func__,
+				       jobacct->tres_usage_in_tot[
+					       TRES_ARRAY_ENERGY],
+				       jobacct->tres_usage_out_tot[
+					       TRES_ARRAY_ENERGY]);
 			}
 
 			debug4("no pids in this container %"PRIu64"", cont_id);
@@ -794,6 +803,12 @@ static void _record_profile(struct jobacctinfo *jobacct)
 		data[FIELD_CPUTIME].d =
 			((double)jobacct->tres_usage_in_tot[TRES_ARRAY_CPU] -
 			 jobacct->last_total_cputime) / CPU_TIME_ADJ;
+
+		if (data[FIELD_CPUTIME].d < 0)
+			data[FIELD_CPUTIME].d =
+				jobacct->tres_usage_in_tot[TRES_ARRAY_CPU] /
+				CPU_TIME_ADJ;
+
 		et = (jobacct->cur_time - jobacct->last_time);
 		if (!et)
 			data[FIELD_CPUUTIL].d = 0.0;
@@ -805,9 +820,19 @@ static void _record_profile(struct jobacctinfo *jobacct)
 		data[FIELD_READ].d = (double) jobacct->
 			tres_usage_in_tot[TRES_ARRAY_FS_DISK] -
 			jobacct->last_tres_usage_in_tot;
+
+		if (data[FIELD_READ].d < 0)
+			data[FIELD_READ].d =
+				jobacct->tres_usage_in_tot[TRES_ARRAY_FS_DISK];
+
 		data[FIELD_WRITE].d = (double) jobacct->
 			tres_usage_out_tot[TRES_ARRAY_FS_DISK] -
 			jobacct->last_tres_usage_out_tot;
+
+		if (data[FIELD_WRITE].d < 0)
+			data[FIELD_WRITE].d =
+				jobacct->tres_usage_out_tot[TRES_ARRAY_FS_DISK];
+
 		/* Profile disk as MB */
 		data[FIELD_READ].d /= 1048576.0;
 		data[FIELD_WRITE].d /= 1048576.0;
@@ -904,12 +929,13 @@ extern void jag_common_poll_data(
 	char sbuf[72];
 	int energy_counted = 0;
 	time_t ct;
-	static int no_over_memory_kill = -1;
+	static int over_memory_kill = -1;
 	int i = 0;
+	char *tok, *save_ptr = NULL;
 
 	xassert(callbacks);
 
-	if (!pgid_plugin && (cont_id == INFINITE64)) {
+	if (!pgid_plugin && (cont_id == NO_VAL64)) {
 		debug("cont_id hasn't been set yet not running poll");
 		return;
 	}
@@ -920,13 +946,22 @@ extern void jag_common_poll_data(
 	}
 	processing = 1;
 
-	if (no_over_memory_kill == -1) {
+	if (over_memory_kill == -1) {
 		char *acct_params = slurm_get_jobacct_gather_params();
-		if (acct_params && xstrcasestr(acct_params, "NoOverMemoryKill"))
-			no_over_memory_kill = 1;
-		else
-			no_over_memory_kill = 0;
-		xfree(acct_params);
+
+		over_memory_kill = 0;
+
+		if (acct_params) {
+			tok = strtok_r(acct_params, ",", &save_ptr);
+			while (tok) {
+				if (xstrcasecmp(tok, "OverMemoryKill") == 0) {
+					over_memory_kill = 1;
+					break;
+				}
+				tok = strtok_r(NULL, ",", &save_ptr);
+			}
+			xfree(acct_params);
+		}
 	}
 
 	if (!callbacks->get_precs)
@@ -946,6 +981,14 @@ extern void jag_common_poll_data(
 		if (!(prec = list_find_first(prec_list, _find_prec, jobacct)))
 			continue;
 
+		/*
+		 * Only jobacct_gather/cgroup uses prec_extra, and we want to
+		 * make sure we call it once per task, so call it here as we
+		 * iterate through the tasks instead of in get_precs.
+		 */
+		if (callbacks->prec_extra)
+			(*(callbacks->prec_extra))(prec, jobacct->id.taskid);
+
 #if _DEBUG
 		info("pid:%u ppid:%u rss:%"PRIu64" B",
 		     prec->pid, prec->ppid,
@@ -959,7 +1002,7 @@ extern void jag_common_poll_data(
 		last_total_cputime =
 			(double)jobacct->tres_usage_in_tot[TRES_ARRAY_CPU];
 
-		cpu_calc = prec->ssec + prec->usec;
+		cpu_calc = (prec->ssec + prec->usec) / (double)hertz;
 
 		/*
 		 * Since we are not storing things as a double anymore make it
@@ -971,7 +1014,9 @@ extern void jag_common_poll_data(
 
 		/* get energy consumption
 		 * only once is enough since we
-		 * report per node energy consumption */
+		 * report per node energy consumption.
+		 * Energy is stored in read fields, while power is stored
+		 * in write fields.*/
 		debug2("energycounted = %d", energy_counted);
 		if (energy_counted == 0) {
 			acct_gather_energy_g_get_data(
@@ -979,8 +1024,13 @@ extern void jag_common_poll_data(
 				&jobacct->energy);
 			prec->tres_data[TRES_ARRAY_ENERGY].size_read =
 				jobacct->energy.consumed_energy;
-			debug2("getjoules_task energy = %"PRIu64,
-			       jobacct->energy.consumed_energy);
+			prec->tres_data[TRES_ARRAY_ENERGY].size_write =
+				jobacct->energy.current_watts;
+			debug2("%s: energy = %"PRIu64" watts = %"PRIu64" ave_watts = %u",
+			       __func__,
+			       prec->tres_data[TRES_ARRAY_ENERGY].size_read,
+			       prec->tres_data[TRES_ARRAY_ENERGY].size_write,
+			       jobacct->energy.base_watts);
 			energy_counted = 1;
 		}
 
@@ -1026,8 +1076,8 @@ extern void jag_common_poll_data(
 		total_job_vsize += jobacct->tres_usage_in_tot[TRES_ARRAY_VMEM];
 
 		/* Update the cpu times */
-		jobacct->user_cpu_sec = (uint32_t)prec->usec;
-		jobacct->sys_cpu_sec = (uint32_t)prec->ssec;
+		jobacct->user_cpu_sec = (uint32_t)(prec->usec / (double)hertz);
+		jobacct->sys_cpu_sec = (uint32_t)(prec->ssec / (double)hertz);
 
 		/* compute frequency */
 		jobacct->this_sampled_cputime =
@@ -1038,7 +1088,7 @@ extern void jag_common_poll_data(
 		jobacct->act_cpufreq =
 			_update_weighted_freq(jobacct, sbuf);
 
-		debug("%s: Task %u pid %d ave_freq = %u mem size/max %"PRIu64"/%"PRIu64" vmem size/max %"PRIu64"/%"PRIu64", disk read size/max (%"PRIu64"/%"PRIu64"), disk write size/max (%"PRIu64"/%"PRIu64"), time %f(%u+%u)",
+		debug("%s: Task %u pid %d ave_freq = %u mem size/max %"PRIu64"/%"PRIu64" vmem size/max %"PRIu64"/%"PRIu64", disk read size/max (%"PRIu64"/%"PRIu64"), disk write size/max (%"PRIu64"/%"PRIu64"), time %f(%u+%u) Energy tot/max %"PRIu64"/%"PRIu64" TotPower %"PRIu64" MaxPower %"PRIu64" MinPower %"PRIu64,
 		      __func__,
 		      jobacct->id.taskid,
 		      jobacct->pid,
@@ -1054,7 +1104,12 @@ extern void jag_common_poll_data(
 		      (double)(jobacct->tres_usage_in_tot[TRES_ARRAY_CPU] /
 			       CPU_TIME_ADJ),
 		      jobacct->user_cpu_sec,
-		      jobacct->sys_cpu_sec);
+		      jobacct->sys_cpu_sec,
+		      jobacct->tres_usage_in_tot[TRES_ARRAY_ENERGY],
+		      jobacct->tres_usage_in_max[TRES_ARRAY_ENERGY],
+		      jobacct->tres_usage_out_tot[TRES_ARRAY_ENERGY],
+		      jobacct->tres_usage_out_max[TRES_ARRAY_ENERGY],
+		      jobacct->tres_usage_out_min[TRES_ARRAY_ENERGY]);
 
 		if (profile &&
 		    acct_gather_profile_g_is_active(ACCT_GATHER_PROFILE_TASK)) {
@@ -1074,7 +1129,7 @@ extern void jag_common_poll_data(
 	}
 	list_iterator_destroy(itr);
 
-	if (!no_over_memory_kill)
+	if (over_memory_kill)
 		jobacct_gather_handle_mem_limit(total_job_mem, total_job_vsize);
 
 finished:

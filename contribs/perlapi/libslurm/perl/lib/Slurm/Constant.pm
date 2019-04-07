@@ -583,6 +583,10 @@ This package export constants for use with Slurm. This includes enumerations and
 
 =item * JOBCOND_FLAG_RUNAWAY     0x00000008
 
+=item * JOBCOND_FLAG_WHOLE_HETJOB 0x00000010
+
+=item * JOBCOND_FLAG_NO_WHOLE_HETJOB 0x00000020
+
 =back
 
 =head3 Connection type
@@ -778,6 +782,14 @@ This package export constants for use with Slurm. This includes enumerations and
 =item * TRES_ENERGY                     3
 
 =item * TRES_NODE                       4
+
+=item * TRES_BILLING                    5
+
+=item * TRES_FS_DISK                    6
+
+=item * TRES_VMEM                       7
+
+=item * TRES_PAGES                      8
 
 =back
 

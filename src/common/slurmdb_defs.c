@@ -348,6 +348,53 @@ extern int slurmdb_setup_cluster_rec(slurmdb_cluster_rec_t *cluster_rec)
 	return SLURM_SUCCESS;
 }
 
+extern void slurmdb_job_cond_def_start_end(slurmdb_job_cond_t *job_cond)
+{
+	if (!job_cond || (job_cond->flags & JOBCOND_FLAG_RUNAWAY))
+		return;
+	/*
+	 * Defaults for start and end times...
+	 * - with -j and -s:
+	 *   -S defaults to Epoch 0
+	 *   -E defaults to -S (unless no -S then Now)
+	 * - with only -j (NOT -s)
+	 *   -S defaults to Epoch 0
+	 *   -E defaults to Now
+	 * - with only -s (NOT -j):
+	 *   -S defaults to Now
+	 *   -E defaults to -S
+	 * - without either -j nor -s:
+	 *   -S defaults to Midnight
+	 *   -E defaults to Now
+	 */
+	if (job_cond->state_list && list_count(job_cond->state_list)) {
+		if (!job_cond->usage_start &&
+		    (!job_cond->step_list || !list_count(job_cond->step_list)))
+			job_cond->usage_start = time(NULL);
+
+		if (job_cond->usage_start && !job_cond->usage_end)
+			job_cond->usage_end = job_cond->usage_start;
+	} else if (!job_cond->step_list || !list_count(job_cond->step_list)) {
+		if (!job_cond->usage_start) {
+			struct tm start_tm;
+			job_cond->usage_start = time(NULL);
+			if (!slurm_localtime_r(&job_cond->usage_start,
+					       &start_tm)) {
+				error("Couldn't get localtime from %ld",
+				      (long)job_cond->usage_start);
+			} else {
+				start_tm.tm_sec = 0;
+				start_tm.tm_min = 0;
+				start_tm.tm_hour = 0;
+				job_cond->usage_start = slurm_mktime(&start_tm);
+			}
+		}
+	}
+
+	if (!job_cond->usage_end)
+		job_cond->usage_end = time(NULL);
+}
+
 static uint32_t _str_2_qos_flags(char *flags)
 {
 	if (xstrcasestr(flags, "DenyOnLimit"))
@@ -419,20 +466,16 @@ static local_cluster_rec_t * _job_will_run (job_desc_msg_t *req)
 	will_run_response_msg_t *will_run_resp;
 	char buf[64];
 	int rc;
-	uint32_t cluster_flags = slurmdb_setup_cluster_flags();
-	char *type = "processors";
 
 	rc = slurm_job_will_run2(req, &will_run_resp);
 
 	if (rc >= 0) {
-		if (cluster_flags & CLUSTER_FLAG_BG)
-			type = "cnodes";
 		slurm_make_time_str(&will_run_resp->start_time,
 				    buf, sizeof(buf));
-		debug("Job %u to start at %s on cluster %s using %u %s on %s",
+		debug("Job %u to start at %s on cluster %s using %u processors on nodes %s in partition %s",
 		      will_run_resp->job_id, buf, working_cluster_rec->name,
-		      will_run_resp->proc_cnt, type,
-		      will_run_resp->node_list);
+		      will_run_resp->proc_cnt, will_run_resp->node_list,
+		      will_run_resp->part_name);
 
 		local_cluster = xmalloc(sizeof(local_cluster_rec_t));
 		local_cluster->cluster_rec = working_cluster_rec;
@@ -1350,7 +1393,7 @@ extern List slurmdb_get_info_cluster(char *cluster_names)
 		all_clusters = 1;
 
 	cluster_name = slurm_get_cluster_name();
-	db_conn = acct_storage_g_get_connection(NULL, 0, 1, cluster_name);
+	db_conn = acct_storage_g_get_connection(NULL, 0, NULL, 1, cluster_name);
 	xfree(cluster_name);
 
 	slurmdb_init_cluster_cond(&cluster_cond, 0);
@@ -1424,6 +1467,7 @@ extern void slurmdb_init_assoc_rec(slurmdb_assoc_rec_t *assoc,
 	/* assoc->grp_tres_run_mins = NULL; */
 	/* assoc->grp_tres = NULL; */
 	assoc->grp_jobs = NO_VAL;
+	assoc->grp_jobs_accrue = NO_VAL;
 	assoc->grp_submit_jobs = NO_VAL;
 	assoc->grp_wall = NO_VAL;
 
@@ -1435,6 +1479,8 @@ extern void slurmdb_init_assoc_rec(slurmdb_assoc_rec_t *assoc,
 	/* assoc->max_tres_run_mins = NULL; */
 	/* assoc->max_tres_pj = NULL; */
 	assoc->max_jobs = NO_VAL;
+	assoc->max_jobs_accrue = NO_VAL;
+	assoc->min_prio_thresh = NO_VAL;
 	assoc->max_submit_jobs = NO_VAL;
 	assoc->max_wall_pj = NO_VAL;
 
@@ -1504,6 +1550,7 @@ extern void slurmdb_init_qos_rec(slurmdb_qos_rec_t *qos, bool free_it,
 	/* qos->grp_tres_run_mins = NULL; */
 	/* qos->grp_tres = NULL; */
 	qos->grp_jobs = init_val;
+	qos->grp_jobs_accrue = init_val;
 	qos->grp_submit_jobs = init_val;
 	qos->grp_wall = init_val;
 
@@ -1515,6 +1562,9 @@ extern void slurmdb_init_qos_rec(slurmdb_qos_rec_t *qos, bool free_it,
 	/* qos->max_tres_pu = NULL; */
 	qos->max_jobs_pa = init_val;
 	qos->max_jobs_pu = init_val;
+	qos->max_jobs_accrue_pa = init_val;
+	qos->max_jobs_accrue_pu = init_val;
+	qos->min_prio_thresh = init_val;
 	qos->max_submit_jobs_pa = init_val;
 	qos->max_submit_jobs_pu = init_val;
 	qos->max_wall_pj = init_val;
@@ -1601,7 +1651,6 @@ extern void slurmdb_init_res_cond(slurmdb_res_cond_t *res,
 
 extern char *slurmdb_qos_str(List qos_list, uint32_t level)
 {
-	ListIterator itr = NULL;
 	slurmdb_qos_rec_t *qos = NULL;
 
 	if (!qos_list) {
@@ -1612,12 +1661,7 @@ extern char *slurmdb_qos_str(List qos_list, uint32_t level)
 		return "";
 	}
 
-	itr = list_iterator_create(qos_list);
-	while((qos = list_next(itr))) {
-		if (level == qos->id)
-			break;
-	}
-	list_iterator_destroy(itr);
+	qos = list_find_first(qos_list, slurmdb_find_qos_in_list, &level);
 	if (qos)
 		return qos->name;
 	else
@@ -2419,6 +2463,11 @@ extern void log_assoc_rec(slurmdb_assoc_rec_t *assoc_ptr,
 	else if (assoc_ptr->grp_jobs != NO_VAL)
 		debug2("  GrpJobs          : %u", assoc_ptr->grp_jobs);
 
+	if (assoc_ptr->grp_jobs_accrue == INFINITE)
+		debug2("  GrpJobsAccrue    : NONE");
+	else if (assoc_ptr->grp_jobs_accrue != NO_VAL)
+		debug2("  GrpJobsAccrue    : %u", assoc_ptr->grp_jobs_accrue);
+
 	if (assoc_ptr->grp_submit_jobs == INFINITE)
 		debug2("  GrpSubmitJobs    : NONE");
 	else if (assoc_ptr->grp_submit_jobs != NO_VAL)
@@ -2450,6 +2499,16 @@ extern void log_assoc_rec(slurmdb_assoc_rec_t *assoc_ptr,
 		debug2("  MaxJobs          : NONE");
 	else if (assoc_ptr->max_jobs != NO_VAL)
 		debug2("  MaxJobs          : %u", assoc_ptr->max_jobs);
+
+	if (assoc_ptr->max_jobs_accrue == INFINITE)
+		debug2("  MaxJobsAccrue    : NONE");
+	else if (assoc_ptr->max_jobs_accrue != NO_VAL)
+		debug2("  MaxJobsAccrue    : %u", assoc_ptr->max_jobs_accrue);
+
+	if (assoc_ptr->min_prio_thresh == INFINITE)
+		debug2("  MinPrioThresh    : NONE");
+	else if (assoc_ptr->min_prio_thresh != NO_VAL)
+		debug2("  MinPrioThresh    : %u", assoc_ptr->min_prio_thresh);
 
 	if (assoc_ptr->max_submit_jobs == INFINITE)
 		debug2("  MaxSubmitJobs    : NONE");
@@ -3231,6 +3290,7 @@ extern void slurmdb_copy_assoc_rec_limits(slurmdb_assoc_rec_t *out,
 					  slurmdb_assoc_rec_t *in)
 {
 	out->grp_jobs = in->grp_jobs;
+	out->grp_jobs_accrue = in->grp_jobs_accrue;
 	out->grp_submit_jobs = in->grp_submit_jobs;
 	xfree(out->grp_tres);
 	out->grp_tres = xstrdup(in->grp_tres);
@@ -3241,6 +3301,8 @@ extern void slurmdb_copy_assoc_rec_limits(slurmdb_assoc_rec_t *out,
 	out->grp_wall = in->grp_wall;
 
 	out->max_jobs = in->max_jobs;
+	out->max_jobs_accrue = in->max_jobs_accrue;
+	out->min_prio_thresh = in->min_prio_thresh;
 	out->max_submit_jobs = in->max_submit_jobs;
 	xfree(out->max_tres_pj);
 	out->max_tres_pj = xstrdup(in->max_tres_pj);
@@ -3330,6 +3392,7 @@ extern void slurmdb_copy_qos_rec_limits(slurmdb_qos_rec_t *out,
 	out->flags = in->flags;
 	out->grace_time = in->grace_time;
 	out->grp_jobs = in->grp_jobs;
+	out->grp_jobs_accrue = in->grp_jobs_accrue;
 	out->grp_submit_jobs = in->grp_submit_jobs;
 	xfree(out->grp_tres);
 	out->grp_tres = xstrdup(in->grp_tres);

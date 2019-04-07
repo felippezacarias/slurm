@@ -141,9 +141,9 @@ function displayfile()
    get_field("ClusterName",document.config.cluster_name) + "<br>" +
    "#JobAcctGatherFrequency=30 <br>" +
    "JobAcctGatherType=jobacct_gather/" + get_radio_value(document.config.job_acct_gather_type) + "<br>" +
-   "#SlurmctldDebug=3 <br>" +
+   "#SlurmctldDebug=info <br>" +
    get_field("SlurmctldLogFile",document.config.slurmctld_logfile) + "<br>" +
-   "#SlurmdDebug=3 <br>" +
+   "#SlurmdDebug=info <br>" +
    get_field("SlurmdLogFile",document.config.slurmd_logfile) + "<br>" +
    "# <br>" +
    "# <br>" +
@@ -349,7 +349,6 @@ Select one value for <B>SwitchType</B>:<BR>
 <input type="radio" name="switch_type" value="cray"> <B>Cray</B>: Cray proprietary interconnect<BR>
 <input type="radio" name="switch_type" value="none" checked> <B>None</B>: No special
 handling required (InfiniBand, Myrinet, Ethernet, etc.)<BR>
-<input type="radio" name="switch_type" value="nrt"> <B>NRT</B>: IBM Network Resource Table<BR>
 <P>
 
 <H2>Default MPI Type</H2>
@@ -390,8 +389,6 @@ Select one value for <B>SelectType</B>:<BR>
 <input type="radio" name="select_type" value="linear">
 <B>Linear</B>: Node-base
 resource allocation, does not manage individual processor allocation<BR>
-<input type="radio" name="select_type" value="serial">
-<B>Serial</B>: Execute single CPU jobs only<BR>
 <DL>
 <DT><B>SelectTypeParameters</B> (As used by <I>SelectType=cons_res or cray</I> only):
     <DD> Note: The -E extension for sockets, cores, and threads

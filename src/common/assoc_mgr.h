@@ -71,13 +71,6 @@ typedef struct {
 	lock_level_t wckey;
 } assoc_mgr_lock_t;
 
-/* Interval lock structure
- * we actually use the count for each data type, see macros below
- *   (assoc_mgr_lock_datatype_t * 4 + 0) = read_lock        read locks in use
- *   (assoc_mgr_lock_datatype_t * 4 + 1) = write_lock       write locks in use
- *   (assoc_mgr_lock_datatype_t * 4 + 2) = write_wait_lock  write locks pending
- *   (assoc_mgr_lock_datatype_t * 4 + 3) = write_cnt_lock   write lock count
- */
 typedef enum {
 	ASSOC_LOCK,
 	FILE_LOCK,
@@ -88,10 +81,6 @@ typedef enum {
 	WCKEY_LOCK,
 	ASSOC_MGR_ENTITY_COUNT
 } assoc_mgr_lock_datatype_t;
-
-typedef struct {
-	int entity[ASSOC_MGR_ENTITY_COUNT * 4];
-} assoc_mgr_lock_flags_t;
 
 typedef struct {
  	uint16_t cache_level;
@@ -134,6 +123,10 @@ extern int assoc_mgr_init(void *db_conn, assoc_init_args_t *args,
 extern int assoc_mgr_fini(bool save_state);
 extern void assoc_mgr_lock(assoc_mgr_lock_t *locks);
 extern void assoc_mgr_unlock(assoc_mgr_lock_t *locks);
+
+#ifndef NDEBUG
+extern bool verify_assoc_lock(assoc_mgr_lock_datatype_t datatype, lock_level_t level);
+#endif
 
 /* ran after a new tres_list is given */
 extern int assoc_mgr_post_tres_list(List new_list);
@@ -194,7 +187,7 @@ extern int assoc_mgr_fill_in_tres(void *db_conn,
  *                      DO NOT FREE.
  * IN: locked - If you plan on using assoc_pptr after this function
  *              you need to have an assoc_mgr_lock_t READ_LOCK for
- *              associations while you use it before and after the
+ *              associations and users while you use it before and after the
  *              return.  This is not required if using the assoc for
  *              non-pointer portions.
  * RET: SLURM_SUCCESS on success, else SLURM_ERROR
@@ -213,11 +206,16 @@ extern int assoc_mgr_fill_in_assoc(void *db_conn,
  * IN/OUT: user_pptr - if non-NULL then return a pointer to the
  *		       slurmdb_user record in cache on success
  *                     DO NOT FREE.
+ * IN: locked - If you plan on using user_pptr outside
+ *              this function you need to have an assoc_mgr_lock_t
+ *              READ_LOCK for User while you use it before and after the
+ *              return.  This is not required if using the assoc for
+ *              non-pointer portions.
  * RET: SLURM_SUCCESS on success SLURM_ERROR else
  */
 extern int assoc_mgr_fill_in_user(void *db_conn, slurmdb_user_rec_t *user,
 				  int enforce,
-				  slurmdb_user_rec_t **user_pptr);
+				  slurmdb_user_rec_t **user_pptr, bool locked);
 
 /*
  * get info from the storage
@@ -243,12 +241,18 @@ extern int assoc_mgr_fill_in_qos(void *db_conn, slurmdb_qos_rec_t *qos,
  * IN: enforce - return an error if no such wckey exists
  * IN/OUT: wckey_pptr - if non-NULL then return a pointer to the
  *			slurmdb_wckey record in cache on success
+ * IN: locked - If you plan on using wckey_pptr outside
+ *              this function you need to have an assoc_mgr_lock_t
+ *              READ_LOCK for WCKey and Users while you use it before and after
+ *              the return.  This is not required if using the assoc for
+ *              non-pointer portions.
  * RET: SLURM_SUCCESS on success, else SLURM_ERROR
  */
 extern int assoc_mgr_fill_in_wckey(void *db_conn,
 				   slurmdb_wckey_rec_t *wckey,
 				   int enforce,
-				   slurmdb_wckey_rec_t **wckey_pptr);
+				   slurmdb_wckey_rec_t **wckey_pptr,
+				   bool locked);
 
 /*
  * get admin_level of uid

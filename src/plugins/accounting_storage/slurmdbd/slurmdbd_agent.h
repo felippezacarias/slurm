@@ -41,37 +41,36 @@
 #define _SLURMDBD_AGENT_H
 
 /* Open a socket connection to SlurmDbd
- * auth_info IN - alternate authentication key
- * make_agent IN - make agent to process RPCs if set
- * rollback IN - keep journal and permit rollback if set
+ * callbacks IN - make agent to process RPCs and contains callback pointers
+ * persist_conn_flags OUT - fill in from response of slurmdbd
  * Returns SLURM_SUCCESS or an error code */
-extern int slurm_open_slurmdbd_conn(const slurm_trigger_callbacks_t *callbacks);
+extern int open_slurmdbd_conn(const slurm_trigger_callbacks_t *callbacks,
+			      uint16_t *persist_conn_flags);
 
 /* Close the SlurmDBD socket connection */
-extern int slurm_close_slurmdbd_conn(void);
+extern int close_slurmdbd_conn(void);
 
 /* Send an RPC to the SlurmDBD. Do not wait for the reply. The RPC
  * will be queued and processed later if the SlurmDBD is not responding.
  * NOTE: slurm_open_slurmdbd_conn() must have been called with make_agent set
  *
  * Returns SLURM_SUCCESS or an error code */
-extern int slurm_send_slurmdbd_msg(uint16_t rpc_version,
-				   slurmdbd_msg_t *req);
+extern int send_slurmdbd_msg(uint16_t rpc_version, slurmdbd_msg_t *req);
 
 /* Send an RPC to the SlurmDBD and wait for an arbitrary reply message.
  * The RPC will not be queued if an error occurs.
  * The "resp" message must be freed by the caller.
  * Returns SLURM_SUCCESS or an error code */
-extern int slurm_send_recv_slurmdbd_msg(uint16_t rpc_version,
+extern int send_recv_slurmdbd_msg(uint16_t rpc_version,
 					slurmdbd_msg_t *req,
 					slurmdbd_msg_t *resp);
 
 /* Send an RPC to the SlurmDBD and wait for the return code reply.
  * The RPC will not be queued if an error occurs.
  * Returns SLURM_SUCCESS or an error code */
-extern int slurm_send_slurmdbd_recv_rc_msg(uint16_t rpc_version,
-					   slurmdbd_msg_t *req,
-					   int *rc);
+extern int send_slurmdbd_recv_rc_msg(uint16_t rpc_version,
+				     slurmdbd_msg_t *req,
+				     int *rc);
 
 /* Return true if connection to slurmdbd is active, false otherwise. */
 extern bool slurmdbd_conn_active(void);

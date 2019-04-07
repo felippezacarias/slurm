@@ -53,6 +53,7 @@
 #include "src/common/macros.h"
 #include "src/common/net.h"
 #include "src/common/read_config.h"
+#include "src/common/strlcpy.h"
 #include "src/common/uid.h"
 #include "src/common/x11_util.h"
 #include "src/common/xmalloc.h"
@@ -74,8 +75,9 @@ static char *hostkey_pub = "/etc/ssh/ssh_host_rsa_key.pub";
 static char *priv_format = "%s/.ssh/id_rsa";
 static char *pub_format = "%s/.ssh/id_rsa.pub";
 
-static const char *xauthority_format = "%s/.Xauthority";
+static bool local_xauthority = false;
 static char *xauthority = NULL;
+static char hostname[256] = {0};
 
 static int x11_display = 0;
 
@@ -160,7 +162,13 @@ static void _shutdown_x11(int signal)
 	libssh2_exit();
 
 	if (xauthority) {
-		x11_delete_xauth(xauthority, conf->hostname, x11_display);
+		if (local_xauthority) {
+			if (unlink(xauthority))
+				error("%s: problem unlinking xauthority file %s: %m",
+				      __func__, xauthority);
+		} else
+			x11_delete_xauth(xauthority, hostname, x11_display);
+
 		xfree(xauthority);
 	}
 
@@ -178,7 +186,8 @@ static void _shutdown_x11(int signal)
  * IN/OUT: display - local X11 display number
  * OUT: SLURM_SUCCESS or SLURM_ERROR
  */
-extern int setup_x11_forward(stepd_step_rec_t *job, int *display)
+extern int setup_x11_forward(stepd_step_rec_t *job, int *display,
+			     char **tmp_xauthority)
 {
 	int rc, hostauth_failed = 1;
 	struct sockaddr_in sin;
@@ -192,6 +201,7 @@ extern int setup_x11_forward(stepd_step_rec_t *job, int *display)
 	 */
 	uint16_t ports[2] = {6020, 6099};
 	int sig_array[2] = {SIGTERM, 0};
+	*tmp_xauthority = NULL;
 	x11_target_port = job->x11_target_port;
 
 	xsignal(SIGTERM, _shutdown_x11);
@@ -206,8 +216,6 @@ extern int setup_x11_forward(stepd_step_rec_t *job, int *display)
 
 	keypub = xstrdup_printf(pub_format, home);
 	keypriv = xstrdup_printf(priv_format, home);
-	xauthority = xstrdup_printf(xauthority_format, home);
-	xfree(home);
 
 	if (libssh2_init(0)) {
 		error("libssh2 initialization failed");
@@ -273,6 +281,38 @@ extern int setup_x11_forward(stepd_step_rec_t *job, int *display)
 		goto shutdown;
 	}
 
+	/* use a node-local XAUTHORITY file instead of ~/.Xauthority */
+	if (xstrcasestr(conf->x11_params, "local_xauthority")) {
+		int fd;
+		local_xauthority = true;
+		xauthority = xstrdup_printf("%s/.Xauthority-XXXXXX",
+					    conf->tmpfs);
+
+		/* protect against weak file permissions in old glibc */
+		umask(0077);
+		if ((fd = mkstemp(xauthority)) == -1) {
+			error("%s: failed to create temporary XAUTHORITY file: %m",
+			      __func__);
+			goto shutdown;
+		}
+		close(fd);
+	} else {
+		xauthority = xstrdup_printf("%s/.Xauthority", home);
+	}
+
+	xfree(home);
+
+	/*
+	 * Slurm uses the shortened hostname by default (and discards any
+	 * domain component), which can cause problems for some sites.
+	 * So retrieve the raw value from gethostname() again.
+	 */
+	if (xstrcasestr(conf->x11_params, "use_raw_hostname")) {
+		if (gethostname(hostname, sizeof(hostname)))
+			fatal("%s: gethostname failed: %m", __func__);
+	} else
+		strlcpy(hostname, conf->hostname, sizeof(hostname));
+
 	/*
 	 * If hostbased failed or was unavailable, try publickey instead.
 	 */
@@ -296,13 +336,13 @@ extern int setup_x11_forward(stepd_step_rec_t *job, int *display)
 
 	x11_display = port - X11_TCP_PORT_OFFSET;
 	if (x11_set_xauth(xauthority, job->x11_magic_cookie,
-			  conf->hostname, x11_display)) {
+			  hostname, x11_display)) {
 		error("%s: failed to run xauth", __func__);
 		goto shutdown;
 	}
 
 	info("X11 forwarding established on DISPLAY=%s:%d.0",
-	     conf->hostname, x11_display);
+	     hostname, x11_display);
 
 	/*
 	 * Send keepalives every 60 seconds, and have the server
@@ -322,11 +362,14 @@ extern int setup_x11_forward(stepd_step_rec_t *job, int *display)
 	 * steps needing X11 forwarding service launch.
 	 */
 	*display = x11_display;
+	*tmp_xauthority = xstrdup(xauthority);
+
 	return SLURM_SUCCESS;
 
 shutdown:
 	xfree(keypub);
 	xfree(keypriv);
+	xfree(xauthority);
 	close(listen_socket);
 	libssh2_session_disconnect(session, "Disconnecting due to error.");
 	libssh2_session_free(session);

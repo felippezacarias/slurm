@@ -777,7 +777,7 @@ again:
 	}
 
 	if (debug_flags & DEBUG_FLAG_TASK) {
-		info("Bitmask %#lx size: %lu sizeof(*(bm->maskp)): %zd"
+		info("Bitmask %#lx size: %lu sizeof(*(bm->maskp)): %zu"
 		     " weight: %u",
 		     *(bm->maskp), bm->size, sizeof(*(bm->maskp)), *cnt);
 	}
@@ -1012,7 +1012,7 @@ static int _update_num_steps(int val)
 	// Increment or decrement and check result
 	num_steps += val;
 	if (num_steps < 0) {
-		CRAY_ERR("Less than 0 steps on the node");
+		CRAY_ERR("Invalid step count (%d) on the node", num_steps);
 		TEMP_FAILURE_RETRY(close(fd));
 		return 0;
 	}

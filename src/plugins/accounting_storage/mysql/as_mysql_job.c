@@ -56,8 +56,12 @@ static char *_average_tres_usage(uint32_t *tres_ids, uint64_t *tres_cnts,
 	char *ret_str = NULL;
 	int i;
 
+	/*
+	 * Don't return NULL here, we need a blank string or we will print
+	 * '(null)' in the database which really isn't what we want.
+	 */
 	if (!tasks)
-		return ret_str;
+		return xstrdup("");
 
 	for (i = 0; i < tres_cnt; i++) {
 		if (tres_cnts[i] == INFINITE64)
@@ -67,6 +71,8 @@ static char *_average_tres_usage(uint32_t *tres_ids, uint64_t *tres_cnts,
 			   tres_ids[i], tres_cnts[i] / (uint64_t)tasks);
 	}
 
+	if (!ret_str)
+		ret_str = xstrdup("");
 	return ret_str;
 }
 
@@ -173,7 +179,8 @@ static uint32_t _get_wckeyid(mysql_conn_t *mysql_conn, char **name,
 			user_rec.uid = NO_VAL;
 			user_rec.name = user;
 			if (assoc_mgr_fill_in_user(mysql_conn, &user_rec,
-						   1, NULL) != SLURM_SUCCESS) {
+						   1, NULL, false)
+			    != SLURM_SUCCESS) {
 				error("No user by name of %s assoc %u",
 				      user, associd);
 				xfree(user);
@@ -194,7 +201,7 @@ static uint32_t _get_wckeyid(mysql_conn_t *mysql_conn, char **name,
 		wckey_rec.cluster = cluster;
 		if (assoc_mgr_fill_in_wckey(mysql_conn, &wckey_rec,
 					    ACCOUNTING_ENFORCE_WCKEYS,
-					    NULL) != SLURM_SUCCESS) {
+					    NULL, false) != SLURM_SUCCESS) {
 			List wckey_list = NULL;
 			slurmdb_wckey_rec_t *wckey_ptr = NULL;
 			/* we have already checked to make
@@ -218,7 +225,7 @@ static uint32_t _get_wckeyid(mysql_conn_t *mysql_conn, char **name,
 				if (assoc_mgr_fill_in_wckey(
 					    mysql_conn, &wckey_rec,
 					    ACCOUNTING_ENFORCE_WCKEYS,
-					    NULL) != SLURM_SUCCESS) {
+					    NULL, false) != SLURM_SUCCESS) {
 					wckey_ptr = xmalloc(
 						sizeof(slurmdb_wckey_rec_t));
 					wckey_ptr->name =
@@ -243,7 +250,7 @@ static uint32_t _get_wckeyid(mysql_conn_t *mysql_conn, char **name,
 			/* If that worked lets get it */
 			assoc_mgr_fill_in_wckey(mysql_conn, &wckey_rec,
 						ACCOUNTING_ENFORCE_WCKEYS,
-						NULL);
+						NULL, false);
 
 			FREE_NULL_LIST(wckey_list);
 		}
@@ -1129,7 +1136,7 @@ extern int as_mysql_step_start(mysql_conn_t *mysql_conn,
 				   TRES_CPU, 1,
 				   TRES_NODE, 1);
 	} else {
-		char *ionodes = NULL, *temp_nodes = NULL;
+		char *temp_nodes = NULL;
 
 		if (step_ptr->step_node_bitmap) {
 			node_inx = bit_fmt(temp_bit, sizeof(temp_bit),
@@ -1158,26 +1165,12 @@ extern int as_mysql_step_start(mysql_conn_t *mysql_conn,
 			temp_nodes = step_ptr->job_ptr->nodes;
 		} else {
 			tasks = step_ptr->step_layout->task_cnt;
-#ifdef HAVE_BGQ
-			select_g_select_jobinfo_get(step_ptr->select_jobinfo,
-						    SELECT_JOBDATA_NODE_CNT,
-						    &nodes);
-#else
 			nodes = step_ptr->step_layout->node_cnt;
-#endif
 			task_dist = step_ptr->step_layout->task_dist;
 			temp_nodes = step_ptr->step_layout->node_list;
 		}
 
-		select_g_select_jobinfo_get(step_ptr->select_jobinfo,
-					    SELECT_JOBDATA_IONODES,
-					    &ionodes);
-		if (ionodes) {
-			snprintf(node_list, BUFFER_SIZE, "%s[%s]",
-				 temp_nodes, ionodes);
-			xfree(ionodes);
-		} else
-			snprintf(node_list, BUFFER_SIZE, "%s", temp_nodes);
+		snprintf(node_list, BUFFER_SIZE, "%s", temp_nodes);
 	}
 
 	if (!step_ptr->job_ptr->db_index) {

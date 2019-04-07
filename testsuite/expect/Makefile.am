@@ -248,7 +248,6 @@ EXTRA_DIST = \
 	test7.5.prog.c			\
 	test7.6				\
 	test7.6.prog.c			\
-	test7.8				\
 	test7.9				\
 	test7.9.prog.c			\
 	test7.10			\
@@ -280,6 +279,9 @@ EXTRA_DIST = \
 	test7.17_configs/test7.17.6/slurm.conf	\
 	test7.17_configs/test7.17.7/gres.conf	\
 	test7.17_configs/test7.17.7/slurm.conf	\
+	test7.18			\
+	test7.18.prog.c			\
+	test7.19			\
 	test9.1				\
 	test9.2				\
 	test9.3				\
@@ -321,6 +323,7 @@ EXTRA_DIST = \
 	test12.6.prog.c			\
 	test12.7			\
 	test12.8			\
+	test12.9			\
 	test13.1			\
 	test13.2			\
 	test14.1			\
@@ -546,6 +549,7 @@ EXTRA_DIST = \
 	test28.8			\
 	test28.9			\
 	test28.10			\
+	test28.11			\
 	test29.1                        \
 	test29.2                        \
 	test29.3                        \
@@ -554,7 +558,6 @@ EXTRA_DIST = \
 	test29.6                        \
 	test29.7			\
 	test29.8			\
-	test30.1			\
 	test31.1			\
 	test31.2			\
 	test32.1			\
@@ -624,10 +627,7 @@ EXTRA_DIST = \
 	test38.14			\
 	test38.15			\
 	test38.16			\
-	test38.17			\
-	test39.1			\
-	test39.2			\
-	test39.3
+	test38.17
 
 distclean-local:
 	rm -rf *error *output

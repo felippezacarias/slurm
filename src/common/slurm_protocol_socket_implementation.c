@@ -162,15 +162,14 @@ extern ssize_t slurm_msg_recvfrom_timeout(int fd, char **pbuf, size_t *lenp,
 	return (ssize_t) msglen;
 }
 
-extern ssize_t slurm_msg_sendto(int fd, char *buffer, size_t size,
-				uint32_t flags)
+extern ssize_t slurm_msg_sendto(int fd, char *buffer, size_t size)
 {
-	return slurm_msg_sendto_timeout( fd, buffer, size, flags,
-				(slurm_get_msg_timeout() * 1000));
+	return slurm_msg_sendto_timeout(fd, buffer, size,
+					(slurm_get_msg_timeout() * 1000));
 }
 
-ssize_t slurm_msg_sendto_timeout(int fd, char *buffer, size_t size,
-				 uint32_t flags, int timeout)
+ssize_t slurm_msg_sendto_timeout(int fd, char *buffer,
+				 size_t size, int timeout)
 {
 	int   len;
 	uint32_t usize;
@@ -222,7 +221,7 @@ extern int slurm_send_timeout(int fd, char *buf, size_t size,
 	while (sent < size) {
 		timeleft = timeout - _tot_wait(&tstart);
 		if (timeleft <= 0) {
-			debug("slurm_send_timeout at %d of %zd, timeout",
+			debug("slurm_send_timeout at %d of %zu, timeout",
 				sent, size);
 			slurm_seterrno(SLURM_PROTOCOL_SOCKET_IMPL_TIMEOUT);
 			sent = SLURM_ERROR;
@@ -233,7 +232,7 @@ extern int slurm_send_timeout(int fd, char *buf, size_t size,
 			if ((rc == 0) || (errno == EINTR) || (errno == EAGAIN))
  				continue;
 			else {
-				debug("slurm_send_timeout at %d of %zd, "
+				debug("slurm_send_timeout at %d of %zu, "
 					"poll error: %s",
 					sent, size, strerror(errno));
 				slurm_seterrno(SLURM_COMMUNICATIONS_SEND_ERROR);
@@ -271,7 +270,7 @@ extern int slurm_send_timeout(int fd, char *buf, size_t size,
 		if (rc < 0) {
  			if (errno == EINTR)
 				continue;
-			debug("slurm_send_timeout at %d of %zd, "
+			debug("slurm_send_timeout at %d of %zu, "
 				"send error: %s",
 				sent, size, strerror(errno));
  			if (errno == EAGAIN) {	/* poll() lied to us */
@@ -283,7 +282,7 @@ extern int slurm_send_timeout(int fd, char *buf, size_t size,
 			goto done;
 		}
 		if (rc == 0) {
-			debug("slurm_send_timeout at %d of %zd, "
+			debug("slurm_send_timeout at %d of %zu, "
 				"sent zero bytes", sent, size);
 			slurm_seterrno(SLURM_PROTOCOL_SOCKET_ZERO_BYTES_SENT);
 			sent = SLURM_ERROR;
@@ -329,7 +328,7 @@ extern int slurm_recv_timeout(int fd, char *buffer, size_t size,
 	while (recvlen < size) {
 		timeleft = timeout - _tot_wait(&tstart);
 		if (timeleft <= 0) {
-			debug("%s at %d of %zd, timeout", __func__, recvlen,
+			debug("%s at %d of %zu, timeout", __func__, recvlen,
 			      size);
 			slurm_seterrno(SLURM_PROTOCOL_SOCKET_IMPL_TIMEOUT);
 			recvlen = SLURM_ERROR;
@@ -340,7 +339,7 @@ extern int slurm_recv_timeout(int fd, char *buffer, size_t size,
 			if ((errno == EINTR) || (errno == EAGAIN) || (rc == 0))
 				continue;
 			else {
-				debug("%s at %d of %zd, poll error: %m",
+				debug("%s at %d of %zu, poll error: %m",
 				      __func__, recvlen, size);
  				slurm_seterrno(
 					SLURM_COMMUNICATIONS_RECEIVE_ERROR);
@@ -374,7 +373,7 @@ extern int slurm_recv_timeout(int fd, char *buffer, size_t size,
 			if (errno == EINTR)
 				continue;
 			else {
-				debug("%s at %d of %zd, recv error: %m",
+				debug("%s at %d of %zu, recv error: %m",
 				      __func__, recvlen, size);
 				slurm_seterrno(
 					SLURM_COMMUNICATIONS_RECEIVE_ERROR);
@@ -383,7 +382,7 @@ extern int slurm_recv_timeout(int fd, char *buffer, size_t size,
 			}
 		}
 		if (rc == 0) {
-			debug("%s at %d of %zd, recv zero bytes",
+			debug("%s at %d of %zu, recv zero bytes",
 			      __func__, recvlen, size);
 			slurm_seterrno(SLURM_PROTOCOL_SOCKET_ZERO_BYTES_SENT);
 			recvlen = SLURM_ERROR;
@@ -429,7 +428,7 @@ extern int slurm_init_msg_engine(slurm_addr_t *addr)
 		goto error;
 	}
 
-	if (listen(fd, SLURM_PROTOCOL_DEFAULT_LISTEN_BACKLOG) < 0) {
+	if (listen(fd, SLURM_DEFAULT_LISTEN_BACKLOG) < 0) {
 		error( "Error listening on slurm stream socket: %m" ) ;
 		rc = SLURM_ERROR;
 		goto error;
@@ -437,11 +436,9 @@ extern int slurm_init_msg_engine(slurm_addr_t *addr)
 
 	return fd;
 
-    error:
-	if ((close(fd) < 0) && (errno == EINTR))
-		close(fd);	/* try again */
+error:
+	(void) close(fd);
 	return rc;
-
 }
 
 /* Await a connection on socket FD.
@@ -530,18 +527,16 @@ extern int slurm_open_stream(slurm_addr_t *addr, bool retry)
 			goto error;
 		}
 
-		if ((close(fd) < 0) && (errno == EINTR))
-			close(fd);	/* try again */
+		(void) close(fd);
 	}
 
 	return fd;
 
-    error:
+error:
 	slurm_get_ip_str(addr, &port, ip, sizeof(ip));
 	debug2("Error connecting slurm stream socket at %s:%d: %m",
 	       ip, ntohs(port));
-	if ((close(fd) < 0) && (errno == EINTR))
-		close(fd);	/* try again */
+	(void) close(fd);
 	return SLURM_SOCKET_ERROR;
 }
 
