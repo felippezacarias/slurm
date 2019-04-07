@@ -878,7 +878,7 @@ static int _add_job_to_res(struct job_record *job_ptr, int action)
 				      node_ptr->name, true);
 		}
 	}
-	
+
 	if (action != 2) {
 		gres_build_job_details(job_ptr->gres_list,
 				       &job_ptr->gres_detail_cnt,
@@ -2769,14 +2769,48 @@ extern int select_p_select_nodeinfo_get(select_nodeinfo_t *nodeinfo,
 	return rc;
 }
 
-extern int select_p_select_jobinfo_alloc(void)
+// --------------------------------------------------------------------
+#ifndef JOBINFO_MAGIC
+    #define JOBINFO_MAGIC 0x83ac
+#endif // JOBINFO_MAGIC
+
+/* COLOCATION Unused for this plugin */
+extern select_job_degradation_info* select_p_select_jobinfo_alloc(void)
 {
-	return SLURM_SUCCESS;
+    debug5("COLOCATION_SELECT: info allocation");
+    //return SLURM_SUCCESS;
+	select_job_degradation_info *jobinfo = xmalloc(sizeof(select_job_degradation_info));
+	jobinfo->text = NULL;
+	jobinfo->incompatible_jobs = NULL;
+
+	jobinfo->magic = JOBINFO_MAGIC;
+
+	return jobinfo;
 }
 
-extern int select_p_select_jobinfo_free(select_jobinfo_t *jobinfo)
+/* COLOCATION Unused for this plugin */
+extern int select_p_select_jobinfo_free(select_job_degradation_info *jobinfo)
 {
-	return SLURM_SUCCESS;
+    debug5("COLOCATION_SELECT: info deallocation");
+    //return SLURM_SUCCESS;
+	int rc = SLURM_SUCCESS;
+
+	if (jobinfo) {
+		if (jobinfo->magic != JOBINFO_MAGIC) {
+			error("select/cray jobinfo_free: jobinfo magic bad");
+			return EINVAL;
+		}
+
+		jobinfo->magic = 0;
+		if(jobinfo->text)
+            xfree(jobinfo->text);
+        if(jobinfo->incompatible_jobs)
+            list_destroy(jobinfo->incompatible_jobs);
+	}
+	jobinfo->text = NULL;
+	jobinfo->incompatible_jobs = NULL;
+
+	return rc;
 }
 
 extern int select_p_select_jobinfo_set(select_jobinfo_t *jobinfo,
@@ -2793,24 +2827,98 @@ extern int select_p_select_jobinfo_get(select_jobinfo_t *jobinfo,
 	return SLURM_ERROR;
 }
 
-extern select_jobinfo_t *select_p_select_jobinfo_copy(
-	select_jobinfo_t *jobinfo)
+/* COLOCATION Unused for this plugin */
+extern select_job_degradation_info *select_p_select_jobinfo_copy(select_job_degradation_info *jobinfo)
 {
-	return NULL;
+    debug5("COLOCATION_SELECT: info copy");
+    //return SLURM_SUCCESS;
+	select_job_degradation_info *rc = NULL;
+
+	if (jobinfo == NULL)
+		;
+	else if (jobinfo->magic != JOBINFO_MAGIC){
+		error("copy_jobinfo: jobinfo magic bad");
+		return NULL;
+	}else {
+		rc = xmalloc(sizeof(select_job_degradation_info));
+		rc->magic = JOBINFO_MAGIC;
+		rc->incompatible_jobs = NULL;
+		rc->text = NULL;
+		((select_job_degradation_info*)rc)->text = xstrdup(jobinfo->text);
+		if(jobinfo->incompatible_jobs){
+            rc->incompatible_jobs = list_create(NULL);
+            ListIterator it = list_iterator_create(jobinfo->incompatible_jobs);
+            int* jid;
+            while ((jid = (int*) list_next(it))) {
+                int* njid = xmalloc(sizeof(int));
+                *njid = *jid;
+                list_append(rc->incompatible_jobs, njid);
+            }
+            list_iterator_destroy(it);
+		}
+	}
+
+	return rc;
 }
 
-extern int select_p_select_jobinfo_pack(select_jobinfo_t *jobinfo, Buf buffer,
+/* COLOCATION Unused for this plugin */
+extern int select_p_select_jobinfo_pack(select_job_degradation_info *jobinfo, Buf buffer,
 					uint16_t protocol_version)
 {
+    debug5("COLOCATION_SELECT: info pack");
+    //return SLURM_SUCCESS;
+    if(jobinfo){
+        packstr(jobinfo->text, buffer);
+        int32_t len = jobinfo->incompatible_jobs ? list_count(jobinfo->incompatible_jobs) : 0;
+        pack32(len, buffer);
+        if(jobinfo->incompatible_jobs){
+            int32_t tjid;
+            int* jid;
+            ListIterator it = list_iterator_create(jobinfo->incompatible_jobs);
+            while ((jid = (int*) list_next(it))) {
+                tjid = *jid;
+                pack32(tjid, buffer);
+            }
+            list_iterator_destroy(it);
+        }
+    }
 	return SLURM_SUCCESS;
 }
 
-extern int select_p_select_jobinfo_unpack(select_jobinfo_t *jobinfo,
+/* COLOCATION Unused for this plugin */
+extern int select_p_select_jobinfo_unpack(select_job_degradation_info **jobinfop,
 					  Buf buffer,
 					  uint16_t protocol_version)
 {
+    debug5("COLOCATION_SELECT: info unpack");
+    //return SLURM_SUCCESS;
+    *jobinfop = xmalloc(sizeof(select_job_degradation_info));
+    select_job_degradation_info *jobinfo = *jobinfop;
+    jobinfo->text = NULL;
+    jobinfo->incompatible_jobs = NULL;
+	jobinfo->magic = JOBINFO_MAGIC;
+
+    uint32_t uint32_tmp;
+    safe_unpackstr_xmalloc(&(jobinfo->text), &uint32_tmp, buffer);
+    int32_t len=0;
+    if(unpack32(&len, buffer)==SLURM_SUCCESS && len>0){
+        int j;
+        jobinfo->incompatible_jobs = list_create(NULL);
+        for(j=0; j<len; j++){
+            int32_t jidt;
+            unpack32(&jidt, buffer);
+            int* jid = xmalloc(sizeof(int));
+            *jid = jidt;
+            list_append(jobinfo->incompatible_jobs, jid);
+        }
+    }
+
 	return SLURM_SUCCESS;
+    unpack_error:
+	error("COLOCATION_SELECT: info unpack error");
+	return SLURM_ERROR;
 }
+// -----------------------------------------------------------------------------
 
 extern char *select_p_select_jobinfo_sprint(select_jobinfo_t *jobinfo,
 					    char *buf, size_t size, int mode)

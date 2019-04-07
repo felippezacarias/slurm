@@ -616,7 +616,49 @@ uint16_t _can_job_run_on_node(struct job_record *job_ptr, bitstr_t *core_map,
 	struct node_record *node_ptr = node_record_table_ptr + node_i;
 	List gres_list;
 
-	if (((job_ptr->bit_flags & BACKFILL_TEST) == 0) &&
+	if(!test_only){
+        if(job_ptr->select_jobinfo && job_ptr->select_jobinfo->data){
+            select_job_degradation_info* jobinfo = (select_job_degradation_info*)(job_ptr->select_jobinfo->data);
+            info("COLOCATION_SELECT: text:%s", jobinfo->text);
+            if(jobinfo->incompatible_jobs){
+                bool is_unsuitable = false;
+                struct job_record *job_ptr2 = NULL;
+                //info("COLOCATION_SELECT: list size: %u", list_count(jobinfo->incompatible_jobs));
+                char listofjobs[1024];
+                char *listofjobsnext = listofjobs;
+                ListIterator it = list_iterator_create(jobinfo->incompatible_jobs);
+                int* jid;
+                while ((jid = (int*) list_next(it))/* && !is_unsuitable*/){
+                    sprintf(listofjobsnext, " %i ", *jid);
+                    listofjobsnext += strlen(listofjobsnext);
+                    if ((job_ptr2 = find_job_record(*jid))) {
+                        // this is the place we examine the job
+                        if(job_ptr2->job_state != JOB_PENDING && job_ptr2->job_state != JOB_COMPLETE && job_ptr2->node_bitmap){
+                            int i, bitmap_len;
+                            bitmap_len = bit_size(job_ptr2->node_bitmap);
+                            for (i=0; i<bitmap_len; i++) {
+                                if (!bit_test(job_ptr2->node_bitmap, i))
+                                    continue;
+                                if(node_i==i){
+                                    is_unsuitable = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                list_iterator_destroy(it);
+                info("COLOCATION_SELECT: [%i] incompatible jobs: %s", job_ptr->job_id, list_count(jobinfo->incompatible_jobs)>0?listofjobs:"[]");
+                if(is_unsuitable){
+                    info("COLOCATION_SELECT: job %i incompatible with node %i", job_ptr->job_id, node_i);
+                    cpus = 0;
+                    return cpus;
+                }
+            }
+        }
+	}
+
+    if (((job_ptr->bit_flags & BACKFILL_TEST) == 0) &&
 	    !test_only && IS_NODE_COMPLETING(node_ptr)) {
 		/* Do not allocate more jobs to nodes with completing jobs,
 		 * backfill scheduler independently handles completing nodes */
@@ -2694,7 +2736,7 @@ static int _eval_nodes_dfly(struct job_record *job_ptr, bitstr_t *bitmap,
 		}
 	}
 
-	/* Determine lowest level switch satisfying request with best fit 
+	/* Determine lowest level switch satisfying request with best fit
 	 * in respect of the specific required nodes if specified
 	 */
 	best_fit_inx = -1;
@@ -2720,7 +2762,7 @@ static int _eval_nodes_dfly(struct job_record *job_ptr, bitstr_t *bitmap,
 		 * lower level switch OR
 		 * same level but tighter switch (less resource waste) OR
 		 * 2 required switches of same level and nodes count
-		 * but the latter accumulated CPUs count is bigger than 
+		 * but the latter accumulated CPUs count is bigger than
 		 * the former one
 		 */
 		if ((best_fit_inx == -1) ||
@@ -2816,12 +2858,12 @@ static int _eval_nodes_dfly(struct job_record *job_ptr, bitstr_t *bitmap,
 		/* accumulate resources from this leaf on a best-fit basis */
 		while ((max_nodes > 0) && ((rem_nodes > 0) || (rem_cpus > 0))) {
 			/* pick a node using a best-fit approach */
-			/* if rem_cpus < 0, then we will search for nodes 
+			/* if rem_cpus < 0, then we will search for nodes
 			 * with lower free cpus nb first
 			 */
 			int suff = 0, bfsuff = 0, bfloc = 0 , bfsize = 0;
 			int ca_bfloc = 0;
-			for (i = first, j = 0; ((i <= last) && (first >= 0)); 
+			for (i = first, j = 0; ((i <= last) && (first >= 0));
 			     i++, j++) {
 				if (cpus_array[j] == 0)
 					continue;
@@ -2840,7 +2882,7 @@ static int _eval_nodes_dfly(struct job_record *job_ptr, bitstr_t *bitmap,
 			/* no node found, break */
 			if (bfsize == 0)
 				break;
-			
+
 			/* clear resources of this node from the switch */
 			bit_clear(switches_bitmap[best_fit_location], bfloc);
 			switches_node_cnt[best_fit_location]--;
@@ -2879,7 +2921,7 @@ static int _eval_nodes_dfly(struct job_record *job_ptr, bitstr_t *bitmap,
 			rem_cpus -= bfsize;
 			if (job_ptr->req_switch != 1)
 				break;
-		}		
+		}
 
 		/* free best-switch nodes available cpus array */
 		xfree(cpus_array);

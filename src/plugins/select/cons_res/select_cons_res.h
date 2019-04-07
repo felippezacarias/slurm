@@ -99,10 +99,18 @@ struct node_res_record {
 struct node_use_record {
 	uint64_t alloc_memory;		/* real memory reserved by already
 					 * scheduled jobs */
-	List gres_list;			/* list of gres state info managed by 
+	List gres_list;			/* list of gres state info managed by
 					 * plugins */
 	uint16_t node_state;		/* see node_cr_state comments */
 };
+
+// ----------------------- COLOCATION -----------------------------
+typedef struct select_job_degratation_info_t{
+    uint16_t magic;
+    char *text;
+    List incompatible_jobs;
+    int32_t jobid;
+}select_job_degradation_info;
 
 extern bool     backfill_busy_nodes;
 extern bool     have_dragonfly;

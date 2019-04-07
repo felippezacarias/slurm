@@ -1,10 +1,10 @@
 /*****************************************************************************\
- *  colocation.h - Header for contention awareness plugin 
+ *  colocation.h - Header for contention awareness plugin
  *****************************************************************************
- *  
+ *
  *  Produced as my master thesis research.
  *  Written by Felippe Zacarias <fvzacarias@gmail.com> et. al.
- *  
+ *
  *
  *  You should have received a copy of the GNU General Public License along
  *  with Slurm; if not, write to the Free Software Foundation, Inc.,
@@ -14,7 +14,7 @@
 
 #ifndef _SLURM_COLOCATION_H
 #define _SLURM_COLOCATION_H
-#include "src/plugins/select/cons_tres/select_cons_tres.h"
+#include "src/plugins/select/cons_res/select_cons_res.h"
 
 /* colocation_agent - detached thread periodically when pending jobs can start */
 extern void *colocation_agent(void *args);
