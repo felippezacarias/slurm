@@ -1,0 +1,9 @@
+user1:2519
+root:0
+linpack:500
+nobody:65534
+rpc:495
+ntp:74
+sshd:494
+munge:291
+slurm:292

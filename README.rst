@@ -14,15 +14,46 @@ monitoring work (normally a parallel job) on the set of allocated
 nodes. Finally, it arbitrates conflicting requests for resources by
 managing a queue of pending work.
 
-NOTES FOR GITHUB DEVELOPERS
----------------------------
+COLOCATION
+----------
 
-The official issue tracker for Slurm is at
-  https://bugs.schedmd.com/
+This version of slurm contains a developed scheduling plugin to perform
+colocation of single node multithread applications. It works by calculating
+the degradation between them and placing in the same node jobs that can 
+execute together.
 
-We welcome code contributions and patches, but **we do not accept Pull Requests
-through Github at this time.** Please submit patches as attachments to new
-bugs under "Contributions" category.
+COMPILING AND INSTALLING THE DISTRIBUTION
+-----------------------------------------
+
+To compile use the scripts provided in **scripts/**.
+
+ADDITIONAL INFORMATION
+----------------------
+
+**In order to use the colocation plugin, the below environment variables 
+must be set:**
+
+  PYTHONPATH        [ ]
+     This environment variable must point to the degradation model folder.
+     The folder contains the python script that will be used by the colocation
+     plugin for compute the degradation between jobs. Ex:
+     export PYTHONPATH=$PYTHONPATH:${install_folder}/slurm_varios/lib/degradation_model
+  
+  LD_PRELOAD        [ ]
+     This environment variable must point to the python shared lib. This variable is
+     very importante, otherwise during the execution of the python script from
+     **degradation_model** folder there will be erros like:
+     **<type 'exceptions.ImportError'>**
+     **undefined symbol: PyExc_SystemError**
+     Ex: export LD_PRELOAD=${python_system_install}/lib/libpython2.7.so.1.0
+
+
+There are also some additional dependencies that must be installed before using
+the colocation plugin:
+
+  Python
+  Numpy
+  Scikit-learn
 
 SOURCE DISTRIBUTION HIERARCHY
 -----------------------------
@@ -63,20 +94,11 @@ quick description of the subdirectories of the Slurm distribution follows:
      Directory for anything that is outside of slurm proper such as a
      different api or such.  To have this build you need to do a
      make contrib/install-contrib.
-
-COMPILING AND INSTALLING THE DISTRIBUTION
------------------------------------------
-
-Please see the instructions at
-  https://slurm.schedmd.com/quickstart_admin.html
-Extensive documentation is available from our home page at
-  https://slurm.schedmd.com/slurm.html
-
-PROBLEMS
---------
-
-If you experience problems compiling, installing, or running Slurm, see
-   https://slurm.schedmd.com/help.html
+  
+   scripts/        [ Colocation configuration ]
+     The directory contains sample config files, as well as
+     some scripts useful for seting up and running Slurm in a cluster
+     as a job or locally.
 
 LEGAL
 -----
