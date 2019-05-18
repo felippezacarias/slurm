@@ -27,6 +27,15 @@ COMPILING AND INSTALLING THE DISTRIBUTION
 
 To compile use the scripts provided in **scripts/**.
 
+**Warning**: For development if a new file need to be added and autoconf executed again, It will will change important files for the colocation plugin.  In particular the file ***src/plugins/sched/colocation/Makefile.in***. It contains the following lines to correctly compile the plugin and install the degradation model:
+
+        ...
+	CFLAGS = @CFLAGS@ -I/usr/include/python2.7/ -lpython2.7
+	...
+	cp -r model/ "$(libdir)/degradation\_model";\
+	....
+
+
 ADDITIONAL INFORMATION
 ----------------------
 
@@ -37,23 +46,28 @@ must be set:**
      This environment variable must point to the degradation model folder.
      The folder contains the python script that will be used by the colocation
      plugin for compute the degradation between jobs. Ex:
+
      export PYTHONPATH=$PYTHONPATH:${install_folder}/slurm_varios/lib/degradation_model
   
   LD_PRELOAD        [ ]
      This environment variable must point to the python shared lib. This variable is
      very importante, otherwise during the execution of the python script from
      **degradation_model** folder there will be erros like:
-     **<type 'exceptions.ImportError'>**
-     **undefined symbol: PyExc_SystemError**
-     Ex: export LD_PRELOAD=${python_system_install}/lib/libpython2.7.so.1.0
+
+     - **<type 'exceptions.ImportError'>**
+     - **undefined symbol: PyExc_SystemError**
+     
+     Example of value:
+     
+     export LD_PRELOAD=${python_system_install}/lib/libpython2.7.so.1.0
 
 
 There are also some additional dependencies that must be installed before using
 the colocation plugin:
 
-  Python
-  Numpy
-  Scikit-learn
+ - Python 
+ - Numpy
+ - Scikit-learn
 
 SOURCE DISTRIBUTION HIERARCHY
 -----------------------------

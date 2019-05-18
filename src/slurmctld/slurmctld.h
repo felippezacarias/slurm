@@ -689,6 +689,7 @@ struct job_record {
 	uint32_t group_id;		/* group submitted under */
 	char *hwprofile;		/* Application's hardware profile file
 								to be used on the colocation plugin */
+	uint32_t job_id_mate; /* Job ID of the job allowed to be colocated with */
 	uint32_t job_id;		/* job ID */
 	struct job_record *job_next;	/* next entry with same hash index */
 	struct job_record *job_array_next_j; /* job array linked list by job_id */

@@ -44,7 +44,7 @@
 #  define COLOCATION_INTERVAL	30
 #endif
 
-#define COLOCATION_LIMIT	4
+#define COLOCATION_LIMIT	50
 
 #define HARDWARE_COUNTER_STRING_SIZE 12056
 
@@ -443,6 +443,8 @@ static void _update_job_info(PyObject *pListColocation){
 			job_ptr_sec->details->share_res = 1;
 			job_ptr_sec->priority = priority;
 			job_ptr->priority = priority; 
+			job_ptr->job_id_mate = job_ptr_sec->job_id;
+			job_ptr_sec->job_id_mate = job_ptr->job_id;
 			priority--;
 			
 		}
@@ -455,6 +457,7 @@ static void _update_job_info(PyObject *pListColocation){
 
 			job_ptr->details->share_res = 0;
 			job_ptr->priority = priority; 
+			job_ptr->job_id_mate = NO_VAL;
 			priority--;
 			debug5("colocation: %s Jobs to execute alone jobid = %u priority %u.",__func__,job_ptr->job_id,priority);
 		}

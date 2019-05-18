@@ -7903,6 +7903,7 @@ _copy_job_desc_to_job_record(job_desc_msg_t * job_desc,
 	job_ptr->derived_ec = 0;
 
 	job_ptr->hwprofile  = xstrdup(job_desc->hwprofile);
+	job_ptr->job_id_mate = NO_VAL;
 
 	job_ptr->licenses  = xstrdup(job_desc->licenses);
 	job_ptr->mail_type = job_desc->mail_type;

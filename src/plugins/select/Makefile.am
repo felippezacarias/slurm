@@ -4,7 +4,7 @@ if WITH_CXX
 BLUEGENE = bluegene
 endif
 
-SUBDIRS = other alps $(BLUEGENE) cons_res cons_tres cray linear serial
+SUBDIRS = other alps $(BLUEGENE) cons_res cons_tres cray linear linear_colocation serial
 
 # Each plugin here needs a plugin_id, here are the currect plug_ids
 # for each plugin.
@@ -20,3 +20,4 @@ SUBDIRS = other alps $(BLUEGENE) cons_res cons_tres cray linear serial
 # cray + cons_res  = 108
 # cons_tres        = 109
 # cray + cons_tres = 110
+# linear_colocation = 111

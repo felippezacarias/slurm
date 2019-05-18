@@ -612,6 +612,7 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/select/cons_tres/Makefile
 		 src/plugins/select/cray/Makefile
 		 src/plugins/select/linear/Makefile
+		 src/plugins/select/linear_colocation/Makefile
 		 src/plugins/select/other/Makefile
 		 src/plugins/select/serial/Makefile
 		 src/plugins/slurmctld/Makefile

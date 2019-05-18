@@ -955,7 +955,6 @@ infodir
 docdir
 oldincludedir
 includedir
-runstatedir
 localstatedir
 sharedstatedir
 sysconfdir
@@ -1103,7 +1102,6 @@ datadir='${datarootdir}'
 sysconfdir='${prefix}/etc'
 sharedstatedir='${prefix}/com'
 localstatedir='${prefix}/var'
-runstatedir='${localstatedir}/run'
 includedir='${prefix}/include'
 oldincludedir='/usr/include'
 docdir='${datarootdir}/doc/${PACKAGE_TARNAME}'
@@ -1356,15 +1354,6 @@ do
   | -silent | --silent | --silen | --sile | --sil)
     silent=yes ;;
 
-  -runstatedir | --runstatedir | --runstatedi | --runstated \
-  | --runstate | --runstat | --runsta | --runst | --runs \
-  | --run | --ru | --r)
-    ac_prev=runstatedir ;;
-  -runstatedir=* | --runstatedir=* | --runstatedi=* | --runstated=* \
-  | --runstate=* | --runstat=* | --runsta=* | --runst=* | --runs=* \
-  | --run=* | --ru=* | --r=*)
-    runstatedir=$ac_optarg ;;
-
   -sbindir | --sbindir | --sbindi | --sbind | --sbin | --sbi | --sb)
     ac_prev=sbindir ;;
   -sbindir=* | --sbindir=* | --sbindi=* | --sbind=* | --sbin=* \
@@ -1502,7 +1491,7 @@ fi
 for ac_var in	exec_prefix prefix bindir sbindir libexecdir datarootdir \
 		datadir sysconfdir sharedstatedir localstatedir includedir \
 		oldincludedir docdir infodir htmldir dvidir pdfdir psdir \
-		libdir localedir mandir runstatedir
+		libdir localedir mandir
 do
   eval ac_val=\$$ac_var
   # Remove trailing slashes.
@@ -1655,7 +1644,6 @@ Fine tuning of the installation directories:
   --sysconfdir=DIR        read-only single-machine data [PREFIX/etc]
   --sharedstatedir=DIR    modifiable architecture-independent data [PREFIX/com]
   --localstatedir=DIR     modifiable single-machine data [PREFIX/var]
-  --runstatedir=DIR       modifiable per-process data [LOCALSTATEDIR/run]
   --libdir=DIR            object code libraries [EPREFIX/lib]
   --includedir=DIR        C header files [PREFIX/include]
   --oldincludedir=DIR     C header files for non-gcc [/usr/include]
@@ -7970,7 +7958,7 @@ linux* | k*bsd*-gnu | kopensolaris*-gnu | gnu*)
   lt_cv_deplibs_check_method=pass_all
   ;;
 
-netbsd* | netbsdelf*-gnu)
+netbsd*)
   if echo __ELF__ | $CC -E - | $GREP __ELF__ > /dev/null; then
     lt_cv_deplibs_check_method='match_pattern /lib[^/]+(\.so\.[0-9]+\.[0-9]+|_pic\.a)$'
   else
@@ -11672,9 +11660,6 @@ $as_echo_n "checking whether the $compiler linker ($LD) supports shared librarie
   openbsd* | bitrig*)
     with_gnu_ld=no
     ;;
-  linux* | k*bsd*-gnu | gnu*)
-    link_all_deplibs=no
-    ;;
   esac
 
   ld_shlibs=yes
@@ -11929,7 +11914,7 @@ _LT_EOF
       fi
       ;;
 
-    netbsd* | netbsdelf*-gnu)
+    netbsd*)
       if echo __ELF__ | $CC -E - | $GREP __ELF__ >/dev/null; then
 	archive_cmds='$LD -Bshareable $libobjs $deplibs $linker_flags -o $lib'
 	wlarc=
@@ -12599,7 +12584,6 @@ $as_echo "$lt_cv_irix_exported_symbol" >&6; }
 	if test yes = "$lt_cv_irix_exported_symbol"; then
           archive_expsym_cmds='$CC -shared $pic_flag $libobjs $deplibs $compiler_flags $wl-soname $wl$soname `test -n "$verstring" && func_echo_all "$wl-set_version $wl$verstring"` $wl-update_registry $wl$output_objdir/so_locations $wl-exports_file $wl$export_symbols -o $lib'
 	fi
-	link_all_deplibs=no
       else
 	archive_cmds='$CC -shared $libobjs $deplibs $compiler_flags -soname $soname `test -n "$verstring" && func_echo_all "-set_version $verstring"` -update_registry $output_objdir/so_locations -o $lib'
 	archive_expsym_cmds='$CC -shared $libobjs $deplibs $compiler_flags -soname $soname `test -n "$verstring" && func_echo_all "-set_version $verstring"` -update_registry $output_objdir/so_locations -exports_file $export_symbols -o $lib'
@@ -12621,7 +12605,7 @@ $as_echo "$lt_cv_irix_exported_symbol" >&6; }
       esac
       ;;
 
-    netbsd* | netbsdelf*-gnu)
+    netbsd*)
       if echo __ELF__ | $CC -E - | $GREP __ELF__ >/dev/null; then
 	archive_cmds='$LD -Bshareable -o $lib $libobjs $deplibs $linker_flags'  # a.out
       else
@@ -13734,18 +13718,6 @@ fi
   # people can always --disable-shared, the test was removed, and we
   # assume the GNU/Linux dynamic linker is in use.
   dynamic_linker='GNU/Linux ld.so'
-  ;;
-
-netbsdelf*-gnu)
-  version_type=linux
-  need_lib_prefix=no
-  need_version=no
-  library_names_spec='${libname}${release}${shared_ext}$versuffix ${libname}${release}${shared_ext}$major ${libname}${shared_ext}'
-  soname_spec='${libname}${release}${shared_ext}$major'
-  shlibpath_var=LD_LIBRARY_PATH
-  shlibpath_overrides_runpath=no
-  hardcode_into_libs=yes
-  dynamic_linker='NetBSD ld.elf_so'
   ;;
 
 netbsd*)
@@ -16642,7 +16614,7 @@ lt_prog_compiler_static_CXX=
 	    ;;
 	esac
 	;;
-      netbsd* | netbsdelf*-gnu)
+      netbsd*)
 	;;
       *qnx* | *nto*)
         # QNX uses GNU C++, but need to define -shared option too, otherwise
@@ -17016,9 +16988,6 @@ $as_echo_n "checking whether the $compiler linker ($LD) supports shared librarie
       exclude_expsyms_CXX='[_]+GLOBAL_OFFSET_TABLE_|[_]+GLOBAL__[FID]_.*|[_]+head_[A-Za-z0-9_]+_dll|[A-Za-z0-9_]+_dll_iname'
       ;;
     esac
-    ;;
-  linux* | k*bsd*-gnu | gnu*)
-    link_all_deplibs_CXX=no
     ;;
   *)
     export_symbols_cmds_CXX='$NM $libobjs $convenience | $global_symbol_pipe | $SED '\''s/.* //'\'' | sort | uniq > $export_symbols'
@@ -17711,18 +17680,6 @@ fi
   # people can always --disable-shared, the test was removed, and we
   # assume the GNU/Linux dynamic linker is in use.
   dynamic_linker='GNU/Linux ld.so'
-  ;;
-
-netbsdelf*-gnu)
-  version_type=linux
-  need_lib_prefix=no
-  need_version=no
-  library_names_spec='${libname}${release}${shared_ext}$versuffix ${libname}${release}${shared_ext}$major ${libname}${shared_ext}'
-  soname_spec='${libname}${release}${shared_ext}$major'
-  shlibpath_var=LD_LIBRARY_PATH
-  shlibpath_overrides_runpath=no
-  hardcode_into_libs=yes
-  dynamic_linker='NetBSD ld.elf_so'
   ;;
 
 netbsd*)
@@ -22314,8 +22271,8 @@ fi
 
 
 pkg_failed=no
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for CHECK" >&5
-$as_echo_n "checking for CHECK... " >&6; }
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for check >= 0.9.8" >&5
+$as_echo_n "checking for check >= 0.9.8... " >&6; }
 
 if test -n "$CHECK_CFLAGS"; then
     pkg_cv_CHECK_CFLAGS="$CHECK_CFLAGS"
@@ -22355,7 +22312,7 @@ fi
 
 
 if test $pkg_failed = yes; then
-   	{ $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
+        { $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
 $as_echo "no" >&6; }
 
 if $PKG_CONFIG --atleast-pkgconfig-version 0.20; then
@@ -22373,7 +22330,7 @@ fi
 
 	ac_have_check="no"
 elif test $pkg_failed = untried; then
-     	{ $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
+        { $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
 $as_echo "no" >&6; }
 	ac_have_check="no"
 else
@@ -22612,7 +22569,7 @@ else
 #include <stdlib.h>
 
 int
-main (void)
+main ()
 {
   unsigned int major, minor, micro;
 
@@ -24413,8 +24370,8 @@ fi
 fi
 
 pkg_failed=no
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for lua" >&5
-$as_echo_n "checking for lua... " >&6; }
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for ${x_ac_lua_pkg_name}" >&5
+$as_echo_n "checking for ${x_ac_lua_pkg_name}... " >&6; }
 
 if test -n "$lua_CFLAGS"; then
     pkg_cv_lua_CFLAGS="$lua_CFLAGS"
@@ -24454,7 +24411,7 @@ fi
 
 
 if test $pkg_failed = yes; then
-   	{ $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
+        { $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
 $as_echo "no" >&6; }
 
 if $PKG_CONFIG --atleast-pkgconfig-version 0.20; then
@@ -24472,7 +24429,7 @@ fi
 
 	x_ac_have_lua="no"
 elif test $pkg_failed = untried; then
-     	{ $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
+        { $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
 $as_echo "no" >&6; }
 	x_ac_have_lua="no"
 else
@@ -25641,7 +25598,7 @@ $as_echo "${x_ac_deprecated=no}" >&6; }
 
 
 
-ac_config_files="$ac_config_files Makefile auxdir/Makefile contribs/Makefile contribs/cray/Makefile contribs/cray/csm/Makefile contribs/cray/slurmsmwd/Makefile contribs/lua/Makefile contribs/mic/Makefile contribs/pam/Makefile contribs/pam_slurm_adopt/Makefile contribs/perlapi/Makefile contribs/perlapi/libslurm/Makefile contribs/perlapi/libslurm/perl/Makefile.PL contribs/perlapi/libslurmdb/Makefile contribs/perlapi/libslurmdb/perl/Makefile.PL contribs/seff/Makefile contribs/torque/Makefile contribs/openlava/Makefile contribs/sgather/Makefile contribs/sgi/Makefile contribs/sjobexit/Makefile contribs/pmi2/Makefile doc/Makefile doc/man/Makefile doc/man/man1/Makefile doc/man/man3/Makefile doc/man/man5/Makefile doc/man/man8/Makefile doc/html/Makefile doc/html/configurator.html doc/html/configurator.easy.html etc/Makefile src/Makefile src/api/Makefile src/bcast/Makefile src/common/Makefile src/db_api/Makefile src/layouts/Makefile src/layouts/power/Makefile src/layouts/unit/Makefile src/database/Makefile src/sacct/Makefile src/sacctmgr/Makefile src/sreport/Makefile src/salloc/Makefile src/sbatch/Makefile src/sbcast/Makefile src/sattach/Makefile src/scancel/Makefile src/scontrol/Makefile src/sdiag/Makefile src/sinfo/Makefile src/slurmctld/Makefile src/slurmd/Makefile src/slurmd/common/Makefile src/slurmd/slurmd/Makefile src/slurmd/slurmstepd/Makefile src/slurmdbd/Makefile src/smap/Makefile src/sprio/Makefile src/squeue/Makefile src/srun/Makefile src/srun/libsrun/Makefile src/srun_cr/Makefile src/sshare/Makefile src/sstat/Makefile src/strigger/Makefile src/sview/Makefile src/plugins/Makefile src/plugins/accounting_storage/Makefile src/plugins/accounting_storage/common/Makefile src/plugins/accounting_storage/filetxt/Makefile src/plugins/accounting_storage/mysql/Makefile src/plugins/accounting_storage/none/Makefile src/plugins/accounting_storage/slurmdbd/Makefile src/plugins/acct_gather_energy/Makefile src/plugins/acct_gather_energy/cray/Makefile src/plugins/acct_gather_energy/rapl/Makefile src/plugins/acct_gather_energy/ibmaem/Makefile src/plugins/acct_gather_energy/ipmi/Makefile src/plugins/acct_gather_energy/none/Makefile src/plugins/acct_gather_interconnect/Makefile src/plugins/acct_gather_interconnect/ofed/Makefile src/plugins/acct_gather_interconnect/none/Makefile src/plugins/acct_gather_filesystem/Makefile src/plugins/acct_gather_filesystem/lustre/Makefile src/plugins/acct_gather_filesystem/none/Makefile src/plugins/acct_gather_profile/Makefile src/plugins/acct_gather_profile/hdf5/Makefile src/plugins/acct_gather_profile/hdf5/sh5util/Makefile src/plugins/acct_gather_profile/influxdb/Makefile src/plugins/acct_gather_profile/none/Makefile src/plugins/auth/Makefile src/plugins/auth/munge/Makefile src/plugins/auth/none/Makefile src/plugins/burst_buffer/Makefile src/plugins/burst_buffer/common/Makefile src/plugins/burst_buffer/cray/Makefile src/plugins/burst_buffer/generic/Makefile src/plugins/checkpoint/Makefile src/plugins/checkpoint/blcr/Makefile src/plugins/checkpoint/blcr/cr_checkpoint.sh src/plugins/checkpoint/blcr/cr_restart.sh src/plugins/checkpoint/none/Makefile src/plugins/checkpoint/ompi/Makefile src/plugins/core_spec/Makefile src/plugins/core_spec/cray/Makefile src/plugins/core_spec/none/Makefile src/plugins/crypto/Makefile src/plugins/crypto/munge/Makefile src/plugins/crypto/openssl/Makefile src/plugins/ext_sensors/Makefile src/plugins/ext_sensors/rrd/Makefile src/plugins/ext_sensors/none/Makefile src/plugins/gres/Makefile src/plugins/gres/common/Makefile src/plugins/gres/gpu/Makefile src/plugins/gres/nic/Makefile src/plugins/gres/mic/Makefile src/plugins/jobacct_gather/Makefile src/plugins/jobacct_gather/common/Makefile src/plugins/jobacct_gather/linux/Makefile src/plugins/jobacct_gather/cgroup/Makefile src/plugins/jobacct_gather/none/Makefile src/plugins/jobcomp/Makefile src/plugins/jobcomp/elasticsearch/Makefile src/plugins/jobcomp/filetxt/Makefile src/plugins/jobcomp/none/Makefile src/plugins/jobcomp/script/Makefile src/plugins/jobcomp/mysql/Makefile src/plugins/job_container/Makefile src/plugins/job_container/cncu/Makefile src/plugins/job_container/none/Makefile src/plugins/job_submit/Makefile src/plugins/job_submit/all_partitions/Makefile src/plugins/job_submit/cray/Makefile src/plugins/job_submit/defaults/Makefile src/plugins/job_submit/logging/Makefile src/plugins/job_submit/lua/Makefile src/plugins/job_submit/partition/Makefile src/plugins/job_submit/pbs/Makefile src/plugins/job_submit/require_timelimit/Makefile src/plugins/job_submit/throttle/Makefile src/plugins/launch/Makefile src/plugins/launch/aprun/Makefile src/plugins/launch/poe/Makefile src/plugins/launch/runjob/Makefile src/plugins/launch/slurm/Makefile src/plugins/mcs/Makefile src/plugins/mcs/account/Makefile src/plugins/mcs/group/Makefile src/plugins/mcs/none/Makefile src/plugins/mcs/user/Makefile src/plugins/node_features/Makefile src/plugins/node_features/knl_cray/Makefile src/plugins/node_features/knl_generic/Makefile src/plugins/power/Makefile src/plugins/power/common/Makefile src/plugins/power/cray/Makefile src/plugins/power/none/Makefile src/plugins/preempt/Makefile src/plugins/preempt/job_prio/Makefile src/plugins/preempt/none/Makefile src/plugins/preempt/partition_prio/Makefile src/plugins/preempt/qos/Makefile src/plugins/priority/Makefile src/plugins/priority/basic/Makefile src/plugins/priority/multifactor/Makefile src/plugins/proctrack/Makefile src/plugins/proctrack/cray/Makefile src/plugins/proctrack/cgroup/Makefile src/plugins/proctrack/pgid/Makefile src/plugins/proctrack/linuxproc/Makefile src/plugins/proctrack/sgi_job/Makefile src/plugins/proctrack/lua/Makefile src/plugins/route/Makefile src/plugins/route/default/Makefile src/plugins/route/topology/Makefile src/plugins/sched/Makefile src/plugins/sched/backfill/Makefile src/plugins/sched/builtin/Makefile src/plugins/sched/colocation/Makefile src/plugins/sched/hold/Makefile src/plugins/select/Makefile src/plugins/select/alps/Makefile src/plugins/select/alps/libalps/Makefile src/plugins/select/alps/libemulate/Makefile src/plugins/select/bluegene/Makefile src/plugins/select/bluegene/ba_bgq/Makefile src/plugins/select/bluegene/bl_bgq/Makefile src/plugins/select/bluegene/sfree/Makefile src/plugins/select/cons_res/Makefile src/plugins/select/cons_tres/Makefile src/plugins/select/cray/Makefile src/plugins/select/linear/Makefile src/plugins/select/other/Makefile src/plugins/select/serial/Makefile src/plugins/slurmctld/Makefile src/plugins/slurmctld/nonstop/Makefile src/plugins/switch/Makefile src/plugins/switch/cray/Makefile src/plugins/switch/generic/Makefile src/plugins/switch/none/Makefile src/plugins/switch/nrt/Makefile src/plugins/switch/nrt/libpermapi/Makefile src/plugins/mpi/Makefile src/plugins/mpi/none/Makefile src/plugins/mpi/openmpi/Makefile src/plugins/mpi/pmi2/Makefile src/plugins/mpi/pmix/Makefile src/plugins/task/Makefile src/plugins/task/affinity/Makefile src/plugins/task/cgroup/Makefile src/plugins/task/cray/Makefile src/plugins/task/none/Makefile src/plugins/topology/Makefile src/plugins/topology/3d_torus/Makefile src/plugins/topology/hypercube/Makefile src/plugins/topology/node_rank/Makefile src/plugins/topology/none/Makefile src/plugins/topology/tree/Makefile testsuite/Makefile testsuite/expect/Makefile testsuite/slurm_unit/Makefile testsuite/slurm_unit/api/Makefile testsuite/slurm_unit/api/manual/Makefile testsuite/slurm_unit/common/Makefile testsuite/slurm_unit/common/slurm_protocol_pack/Makefile testsuite/slurm_unit/common/slurmdb_pack/Makefile"
+ac_config_files="$ac_config_files Makefile auxdir/Makefile contribs/Makefile contribs/cray/Makefile contribs/cray/csm/Makefile contribs/cray/slurmsmwd/Makefile contribs/lua/Makefile contribs/mic/Makefile contribs/pam/Makefile contribs/pam_slurm_adopt/Makefile contribs/perlapi/Makefile contribs/perlapi/libslurm/Makefile contribs/perlapi/libslurm/perl/Makefile.PL contribs/perlapi/libslurmdb/Makefile contribs/perlapi/libslurmdb/perl/Makefile.PL contribs/seff/Makefile contribs/torque/Makefile contribs/openlava/Makefile contribs/sgather/Makefile contribs/sgi/Makefile contribs/sjobexit/Makefile contribs/pmi2/Makefile doc/Makefile doc/man/Makefile doc/man/man1/Makefile doc/man/man3/Makefile doc/man/man5/Makefile doc/man/man8/Makefile doc/html/Makefile doc/html/configurator.html doc/html/configurator.easy.html etc/Makefile src/Makefile src/api/Makefile src/bcast/Makefile src/common/Makefile src/db_api/Makefile src/layouts/Makefile src/layouts/power/Makefile src/layouts/unit/Makefile src/database/Makefile src/sacct/Makefile src/sacctmgr/Makefile src/sreport/Makefile src/salloc/Makefile src/sbatch/Makefile src/sbcast/Makefile src/sattach/Makefile src/scancel/Makefile src/scontrol/Makefile src/sdiag/Makefile src/sinfo/Makefile src/slurmctld/Makefile src/slurmd/Makefile src/slurmd/common/Makefile src/slurmd/slurmd/Makefile src/slurmd/slurmstepd/Makefile src/slurmdbd/Makefile src/smap/Makefile src/sprio/Makefile src/squeue/Makefile src/srun/Makefile src/srun/libsrun/Makefile src/srun_cr/Makefile src/sshare/Makefile src/sstat/Makefile src/strigger/Makefile src/sview/Makefile src/plugins/Makefile src/plugins/accounting_storage/Makefile src/plugins/accounting_storage/common/Makefile src/plugins/accounting_storage/filetxt/Makefile src/plugins/accounting_storage/mysql/Makefile src/plugins/accounting_storage/none/Makefile src/plugins/accounting_storage/slurmdbd/Makefile src/plugins/acct_gather_energy/Makefile src/plugins/acct_gather_energy/cray/Makefile src/plugins/acct_gather_energy/rapl/Makefile src/plugins/acct_gather_energy/ibmaem/Makefile src/plugins/acct_gather_energy/ipmi/Makefile src/plugins/acct_gather_energy/none/Makefile src/plugins/acct_gather_interconnect/Makefile src/plugins/acct_gather_interconnect/ofed/Makefile src/plugins/acct_gather_interconnect/none/Makefile src/plugins/acct_gather_filesystem/Makefile src/plugins/acct_gather_filesystem/lustre/Makefile src/plugins/acct_gather_filesystem/none/Makefile src/plugins/acct_gather_profile/Makefile src/plugins/acct_gather_profile/hdf5/Makefile src/plugins/acct_gather_profile/hdf5/sh5util/Makefile src/plugins/acct_gather_profile/influxdb/Makefile src/plugins/acct_gather_profile/none/Makefile src/plugins/auth/Makefile src/plugins/auth/munge/Makefile src/plugins/auth/none/Makefile src/plugins/burst_buffer/Makefile src/plugins/burst_buffer/common/Makefile src/plugins/burst_buffer/cray/Makefile src/plugins/burst_buffer/generic/Makefile src/plugins/checkpoint/Makefile src/plugins/checkpoint/blcr/Makefile src/plugins/checkpoint/blcr/cr_checkpoint.sh src/plugins/checkpoint/blcr/cr_restart.sh src/plugins/checkpoint/none/Makefile src/plugins/checkpoint/ompi/Makefile src/plugins/core_spec/Makefile src/plugins/core_spec/cray/Makefile src/plugins/core_spec/none/Makefile src/plugins/crypto/Makefile src/plugins/crypto/munge/Makefile src/plugins/crypto/openssl/Makefile src/plugins/ext_sensors/Makefile src/plugins/ext_sensors/rrd/Makefile src/plugins/ext_sensors/none/Makefile src/plugins/gres/Makefile src/plugins/gres/common/Makefile src/plugins/gres/gpu/Makefile src/plugins/gres/nic/Makefile src/plugins/gres/mic/Makefile src/plugins/jobacct_gather/Makefile src/plugins/jobacct_gather/common/Makefile src/plugins/jobacct_gather/linux/Makefile src/plugins/jobacct_gather/cgroup/Makefile src/plugins/jobacct_gather/none/Makefile src/plugins/jobcomp/Makefile src/plugins/jobcomp/elasticsearch/Makefile src/plugins/jobcomp/filetxt/Makefile src/plugins/jobcomp/none/Makefile src/plugins/jobcomp/script/Makefile src/plugins/jobcomp/mysql/Makefile src/plugins/job_container/Makefile src/plugins/job_container/cncu/Makefile src/plugins/job_container/none/Makefile src/plugins/job_submit/Makefile src/plugins/job_submit/all_partitions/Makefile src/plugins/job_submit/cray/Makefile src/plugins/job_submit/defaults/Makefile src/plugins/job_submit/logging/Makefile src/plugins/job_submit/lua/Makefile src/plugins/job_submit/partition/Makefile src/plugins/job_submit/pbs/Makefile src/plugins/job_submit/require_timelimit/Makefile src/plugins/job_submit/throttle/Makefile src/plugins/launch/Makefile src/plugins/launch/aprun/Makefile src/plugins/launch/poe/Makefile src/plugins/launch/runjob/Makefile src/plugins/launch/slurm/Makefile src/plugins/mcs/Makefile src/plugins/mcs/account/Makefile src/plugins/mcs/group/Makefile src/plugins/mcs/none/Makefile src/plugins/mcs/user/Makefile src/plugins/node_features/Makefile src/plugins/node_features/knl_cray/Makefile src/plugins/node_features/knl_generic/Makefile src/plugins/power/Makefile src/plugins/power/common/Makefile src/plugins/power/cray/Makefile src/plugins/power/none/Makefile src/plugins/preempt/Makefile src/plugins/preempt/job_prio/Makefile src/plugins/preempt/none/Makefile src/plugins/preempt/partition_prio/Makefile src/plugins/preempt/qos/Makefile src/plugins/priority/Makefile src/plugins/priority/basic/Makefile src/plugins/priority/multifactor/Makefile src/plugins/proctrack/Makefile src/plugins/proctrack/cray/Makefile src/plugins/proctrack/cgroup/Makefile src/plugins/proctrack/pgid/Makefile src/plugins/proctrack/linuxproc/Makefile src/plugins/proctrack/sgi_job/Makefile src/plugins/proctrack/lua/Makefile src/plugins/route/Makefile src/plugins/route/default/Makefile src/plugins/route/topology/Makefile src/plugins/sched/Makefile src/plugins/sched/backfill/Makefile src/plugins/sched/builtin/Makefile src/plugins/sched/colocation/Makefile src/plugins/sched/hold/Makefile src/plugins/select/Makefile src/plugins/select/alps/Makefile src/plugins/select/alps/libalps/Makefile src/plugins/select/alps/libemulate/Makefile src/plugins/select/bluegene/Makefile src/plugins/select/bluegene/ba_bgq/Makefile src/plugins/select/bluegene/bl_bgq/Makefile src/plugins/select/bluegene/sfree/Makefile src/plugins/select/cons_res/Makefile src/plugins/select/cons_tres/Makefile src/plugins/select/cray/Makefile src/plugins/select/linear/Makefile src/plugins/select/linear_colocation/Makefile src/plugins/select/other/Makefile src/plugins/select/serial/Makefile src/plugins/slurmctld/Makefile src/plugins/slurmctld/nonstop/Makefile src/plugins/switch/Makefile src/plugins/switch/cray/Makefile src/plugins/switch/generic/Makefile src/plugins/switch/none/Makefile src/plugins/switch/nrt/Makefile src/plugins/switch/nrt/libpermapi/Makefile src/plugins/mpi/Makefile src/plugins/mpi/none/Makefile src/plugins/mpi/openmpi/Makefile src/plugins/mpi/pmi2/Makefile src/plugins/mpi/pmix/Makefile src/plugins/task/Makefile src/plugins/task/affinity/Makefile src/plugins/task/cgroup/Makefile src/plugins/task/cray/Makefile src/plugins/task/none/Makefile src/plugins/topology/Makefile src/plugins/topology/3d_torus/Makefile src/plugins/topology/hypercube/Makefile src/plugins/topology/node_rank/Makefile src/plugins/topology/none/Makefile src/plugins/topology/tree/Makefile testsuite/Makefile testsuite/expect/Makefile testsuite/slurm_unit/Makefile testsuite/slurm_unit/api/Makefile testsuite/slurm_unit/api/manual/Makefile testsuite/slurm_unit/common/Makefile testsuite/slurm_unit/common/slurm_protocol_pack/Makefile testsuite/slurm_unit/common/slurmdb_pack/Makefile"
 
 
 cat >confcache <<\_ACEOF
@@ -27117,6 +27074,7 @@ do
     "src/plugins/sched/Makefile") CONFIG_FILES="$CONFIG_FILES src/plugins/sched/Makefile" ;;
     "src/plugins/sched/backfill/Makefile") CONFIG_FILES="$CONFIG_FILES src/plugins/sched/backfill/Makefile" ;;
     "src/plugins/sched/builtin/Makefile") CONFIG_FILES="$CONFIG_FILES src/plugins/sched/builtin/Makefile" ;;
+    "src/plugins/sched/colocation/Makefile") CONFIG_FILES="$CONFIG_FILES src/plugins/sched/colocation/Makefile" ;;
     "src/plugins/sched/hold/Makefile") CONFIG_FILES="$CONFIG_FILES src/plugins/sched/hold/Makefile" ;;
     "src/plugins/select/Makefile") CONFIG_FILES="$CONFIG_FILES src/plugins/select/Makefile" ;;
     "src/plugins/select/alps/Makefile") CONFIG_FILES="$CONFIG_FILES src/plugins/select/alps/Makefile" ;;
@@ -27130,6 +27088,7 @@ do
     "src/plugins/select/cons_tres/Makefile") CONFIG_FILES="$CONFIG_FILES src/plugins/select/cons_tres/Makefile" ;;
     "src/plugins/select/cray/Makefile") CONFIG_FILES="$CONFIG_FILES src/plugins/select/cray/Makefile" ;;
     "src/plugins/select/linear/Makefile") CONFIG_FILES="$CONFIG_FILES src/plugins/select/linear/Makefile" ;;
+    "src/plugins/select/linear_colocation/Makefile") CONFIG_FILES="$CONFIG_FILES src/plugins/select/linear_colocation/Makefile" ;;
     "src/plugins/select/other/Makefile") CONFIG_FILES="$CONFIG_FILES src/plugins/select/other/Makefile" ;;
     "src/plugins/select/serial/Makefile") CONFIG_FILES="$CONFIG_FILES src/plugins/select/serial/Makefile" ;;
     "src/plugins/slurmctld/Makefile") CONFIG_FILES="$CONFIG_FILES src/plugins/slurmctld/Makefile" ;;
@@ -27867,6 +27826,7 @@ $as_echo X"$file" |
     cat <<_LT_EOF >> "$cfgfile"
 #! $SHELL
 # Generated automatically by $as_me ($PACKAGE) $VERSION
+# Libtool was configured on host `(hostname || uname -n) 2>/dev/null | sed 1q`:
 # NOTE: Changes made to this file will be lost: look at ltmain.sh.
 
 # Provide generalized library-building support services.
