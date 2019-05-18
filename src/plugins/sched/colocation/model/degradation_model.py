@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 #Predicting the degradation through ML
-def colocation_pairs(queue, degradation_limit):
+#using the blossom algorithm
+def colocation_pairs_optimal(queue, degradation_limit):
 
 	try:
 		import sys
@@ -60,7 +61,7 @@ def colocation_pairs(queue, degradation_limit):
 		schedule_s = []
 		joblist_pairs = blossom.keys()
 		with open('/tmp/SLURM_PYTHON_SCHEDULE_DEBUG.txt', 'a') as f:
-			print >> f, 'RESULT FROM EXECUTION:'
+			print >> f, 'EXECUTION:'  # Python 2.x
 			print >> f, 'PAIRS CREATED: ', blossom  # Python 2.x
 			for key in joblist_pairs:
 				jobid1 = key
@@ -80,15 +81,21 @@ def colocation_pairs(queue, degradation_limit):
 
 	except Exception, e:
 		with open('/tmp/SLURM_PYTHON_ERROR.txt', 'a') as f:
+			print >> f, 'Filename:', type(e)  # Python 2.x
 			print >> f, 'Filename:', str(e)  # Python 2.x
-			print >> f, 'queue', queue
-			print >> f, 'type(queue)', type(queue)
-			print >> f, 'degradation_limit',degradation_limit
-			print >> f, 'type(degradation_limit)',type(degradation_limit)
+			print >> f, 'queue:', queue  # Python 2.x
+			print >> f, 'Filename:', type(queue)  # Python 2.x
+			for job in queue:
+				print >> f, 'type job[0]',type(job[0])
+				print >> f, 'type job[1]',type(job[1])				
+				print >> f, '++++++++++++++++++++++++:'  # Python 2.x
+			print >> f, 'degradation_limit:', degradation_limit  # Python 2.x
+			print >> f, 'Filename:', type(degradation_limit)  # Python 2.x
 			#print('Filename:', str(e), file=f)  # Python 3.x
 		f.closed
 
-def colocation_pairs_greedy(queue, degradation_limit):
+#Greedy approach
+def colocation_pairs(queue, degradation_limit):
 
 	try:
 		import sys
@@ -144,8 +151,9 @@ def colocation_pairs_greedy(queue, degradation_limit):
 				list_jobid.append(tup[0])
 				list_jobid.append(tup[1])	
 
-		with open('/tmp/SLURM_PYTHON_SCHEDULE_DEBUG.txt', 'a') as f:
-			print >> f, 'RESULT FROM EXECUTION:'
+		with open('/tmp/SLURM_PYTHON_SCHEDULE_GREEDY_DEBUG.txt', 'a') as f:
+			print >> f, 'EXECUTION:'  # Python 2.x
+			print >> f, 'GREEDY_LIST: ', greedy_list
 			print >> f, 'PAIRS CREATED: ', schedule  # Python 2.x
 			for tup in schedule:
 				degradation = tup[2]
@@ -161,10 +169,16 @@ def colocation_pairs_greedy(queue, degradation_limit):
 		return schedule_s
 
 	except Exception, e:
-		with open('/tmp/SLURM_PYTHON_ERROR.txt', 'a') as f:
+		with open('/tmp/SLURM_PYTHON_GREEDY_ERROR.txt', 'a') as f:
+			print >> f, 'Filename:', type(e)  # Python 2.x
 			print >> f, 'Filename:', str(e)  # Python 2.x
+			print >> f, 'Filename:', type(queue)  # Python 2.x
+			print >> f, 'degradation_limit:', degradation_limit  # Python 2.x
+			print >> f, 'Filename:', type(degradation_limit)  # Python 2.x
 			#print('Filename:', str(e), file=f)  # Python 3.x
 		f.closed
+
+
 
 def colocation_pairs2(queue, degradation_limit):
 	tupla1 = queue[0]

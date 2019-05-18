@@ -1,0 +1,79 @@
+########################################################
+## Template for slurm.conf file. This file is importante
+## for slurm execution. The following variables must be
+## replaced to correct execution:
+## 
+## YOUR_USER		: Name of your user on the machine
+## TOKEN_HEAD_MASTER	: Hostname of node executing slurmctld 
+## TOKEN_NUM_CTL_PORT	: Port slurmctld is listening
+## TOKEN_NUM_D_PORT	: Port slurmd is listening
+## TOKEN_NAME_NODES	: Name of slurmd nodes
+## SLURM_INSTALL_DIR	: Path of slurm install. 
+##
+## An example of replacement can be found on job.bash 
+## script.
+######################################################
+
+AuthType=auth/none
+SlurmUser=${YOUR_USER}
+SlurmdUser=${YOUR_USER}
+ControlMachine=TOKEN_HEAD_MASTER 
+ControlAddr=TOKEN_HEAD_MASTER 
+SlurmctldTimeout=300
+SlurmdTimeout=300
+MessageTimeout=60
+ReturnToService=1
+
+SlurmctldPort=TOKEN_NUM_CTL_PORT
+SlurmdPort=TOKEN_NUM_D_PORT
+CryptoType=crypto/openssl
+JobCredentialPrivateKey=${SLURM_INSTALL_DIR}/slurm_conf/slurm.key
+JobCredentialPublicCertificate=${SLURM_INSTALL_DIR}/slurm_conf/slurm.cert
+PluginDir=${SLURM_INSTALL_DIR}/slurm_varios/lib/slurm
+TaskPlugin=task/none
+PropagatePrioProcess=0
+PropagateResourceLimitsExcept=CPU
+ProctrackType=proctrack/linuxproc
+KillWait=60
+WaitTime=120
+MaxJobCount=20000
+MinJobAge=300
+OverTimeLimit=1
+InactiveLimit=1800
+
+JobAcctGatherType=jobacct_gather/none
+JobAcctGatherFrequency=30
+
+JobCompType=jobcomp/none
+
+SlurmctldDebug=debug5
+SlurmctldLogFile=${SLURM_INSTALL_DIR}/slurm_varios/var/slurmctld.log
+SlurmdDebug=debug5
+SlurmdLogFile=/tmp/slurmd_exec.log
+
+
+SlurmdSpoolDir=${SLURM_INSTALL_DIR}/slurm_varios/var/spool
+StateSaveLocation=${SLURM_INSTALL_DIR}/slurm_varios/var/state
+CacheGroups=0
+CheckpointType=checkpoint/none
+SwitchType=switch/none
+MpiDefault=none
+SchedulerType=sched/colocation
+SchedulerParameters=bf_interval=30,bf_queue_limit=5000,default_queue_depth=50
+
+#Colocation plugin tested only with linear allocation
+SelectType=select/linear
+
+ClusterName=perfdevel_mall
+
+SlurmctldPidFile=${SLURM_INSTALL_DIR}/slurm_varios/var/slurmctld.pid
+SlurmdPidFile=/tmp/slurmd_exec.pid
+
+
+
+FastSchedule=2
+
+NodeName=TOKEN_NAME_NODES Sockets=2 CoresPerSocket=24 ThreadsPerCore=1 RealMemory=95200
+#Oversubscribe flag must be set, as it permits the node to execute colocated jobs.
+PartitionName=normal Nodes=TOKEN_NAME_NODES Default=YES MaxTime=INFINITE State=UP OverSubscribe=YES:2
+
