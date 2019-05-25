@@ -68,6 +68,7 @@ static void _colocation_scheduling(void);
 static void _load_config(void);
 static void _my_sleep(int secs);
 static void _compute_colocation_pairs(PyObject *pList);
+static bool coalocate_candidate(struct job_record *job_ptr);
 PyObject* _read_job_profile_file(struct job_record *job_ptr);
 PyObject* _create_model_input(void);
 static void _update_job_info(PyObject *pListColocation);
@@ -152,6 +153,28 @@ static void _load_config(void)
 	xfree(select_type);
 }
 
+static bool coalocate_candidate(struct job_record *job_ptr)
+{
+	struct job_record *job_mate;
+	bool candidate = false;
+
+	if ((job_ptr->job_state == JOB_RUNNING)){
+		job_mate = find_job_record(job_ptr->job_id_mate);
+		if( job_mate == NULL)
+			candidate = true; 
+		else
+			if((job_mate->job_state == JOB_RUNNING) && 
+			   (!bit_super_set(job_ptr->node_bitmap,job_mate->node_bitmap))){
+				   candidate = true;
+			   }
+	}
+
+	if (job_ptr->job_state == JOB_PENDING)
+		candidate = true;
+
+	return candidate;
+}
+
 static void _colocation_scheduling(void)
 {
 	int j, rc = SLURM_SUCCESS, job_cnt = 0;
@@ -168,8 +191,7 @@ static void _colocation_scheduling(void)
 	debug5("COLOCATION: %s entrou first time",__func__);
 	job_iterator = list_iterator_create(job_list);		
 	while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
-		if ((job_ptr->job_state == JOB_RUNNING) || 
-			(job_ptr->job_state == JOB_PENDING)){
+		if (coalocate_candidate(job_ptr)){
 			jobs_to_colocate++;
 			if(job_ptr->job_id_mate == NO_VAL) sched = true;
 		}
@@ -218,8 +240,7 @@ PyObject* _create_model_input(void)
 	while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
 		debug5("COLOCATION: %s Job_id %u  job_state %u job_coaloc %u",__func__,job_ptr->job_id,job_ptr->job_state,job_coaloc_limit);
 		if(job_coaloc_limit == max_sched_job_cnt) break;
-		if((job_ptr->job_state == JOB_RUNNING) ||
-		  (job_ptr->job_state == JOB_PENDING)){
+		if (coalocate_candidate(job_ptr)){
 			job_coaloc_limit++;
 			//holding job to prevent scheduling while computing colocation
 			//job_ptr->priority = 0;
