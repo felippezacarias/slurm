@@ -759,6 +759,7 @@ struct job_record {
 					 * (Internal use only, don't save) */
 	uint32_t priority;		/* relative priority of the job,
 					 * zero == held (don't initiate) */
+	uint32_t initial_priority;		/* initial priority of the job */
 	uint32_t *priority_array;	/* partition based priority */
 	priority_factors_object_t *prio_factors; /* cached value used
 						  * by sprio command */
