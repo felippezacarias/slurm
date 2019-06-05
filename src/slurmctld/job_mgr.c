@@ -266,6 +266,7 @@ static int  _write_data_to_file(char *file_name, char *data);
 static int  _write_data_array_to_file(char *file_name, char **data,
 				      uint32_t size);
 static void _xmit_new_end_time(struct job_record *job_ptr);
+static int _delete_job_mate_by_id(void *object, void *arg);
 
 /*
  * Functions used to manage job array responses with a separate return code
@@ -7903,7 +7904,7 @@ _copy_job_desc_to_job_record(job_desc_msg_t * job_desc,
 	job_ptr->derived_ec = 0;
 
 	job_ptr->hwprofile  = xstrdup(job_desc->hwprofile);
-	job_ptr->job_id_mate = NO_VAL;
+	job_ptr->job_ptr_mate = NULL;
 	job_ptr->initial_priority = NO_VAL;
 
 	job_ptr->licenses  = xstrdup(job_desc->licenses);
@@ -9227,6 +9228,17 @@ static int _validate_job_desc(job_desc_msg_t * job_desc_msg, int allocate,
 	return SLURM_SUCCESS;
 }
 
+static int _delete_job_mate_by_id(void *object, void *arg)
+{
+	struct job_record *job_info = (struct job_record *)object;
+	uint32_t job_id          = *(uint32_t *)arg;
+
+	if (job_info->job_id == job_id)
+		return true;
+
+	return false;
+}
+
 /*
  * _list_delete_job - delete a job record and its corresponding job_details,
  *	see common/list.h for documentation
@@ -9285,6 +9297,16 @@ static void _list_delete_job(void *job_entry)
 	FREE_NULL_LIST(job_ptr->gres_list);
 
 	xfree(job_ptr->hwprofile);
+	//Clean jobid from jobmate
+	struct job_record *job_mate;
+	ListIterator job_mate_iterator;
+	job_mate_iterator = list_iterator_create(job_ptr->job_ptr_mate);
+	while ((job_mate = (struct job_record *) list_next(job_mate_iterator))) {
+		   if(job_mate->job_ptr_mate != NULL)
+		   		list_delete_all(job_mate->job_ptr_mate, _delete_job_mate_by_id,
+				&(job_ptr->job_id));
+	}
+	FREE_NULL_LIST(job_ptr->job_ptr_mate);
 
 	xfree(job_ptr->licenses);
 	FREE_NULL_LIST(job_ptr->license_list);

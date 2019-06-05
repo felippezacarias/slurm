@@ -138,9 +138,10 @@ static int _decr_node_job_cnt(int node_inx, struct job_record *job_ptr,
 			      char *pre_err);
 static void _dump_node_cr(struct cr_record *cr_ptr);
 static struct cr_record *_dup_cr(struct cr_record *cr_ptr);
-static int  _find_job_mate(struct job_record *job_ptr, bitstr_t *bitmap,
-			   uint32_t min_nodes, uint32_t max_nodes,
-			   uint32_t req_nodes);
+static int _check_node_job_count(struct cr_record *cr_ptr, bitstr_t * bitmap);
+static int  _find_job_mate(struct cr_record *cr_ptr, struct job_record *job_ptr,
+			   bitstr_t *bitmap, uint32_t min_nodes, uint32_t max_nodes,
+			   uint32_t req_nodes, int max_share);
 static void _free_cr(struct cr_record *cr_ptr);
 static int _get_avail_cpus(struct job_record *job_ptr, int index);
 static uint16_t _get_total_cpus(int index);
@@ -661,14 +662,14 @@ static int _job_count_bitmap(struct cr_record *cr_ptr,
 			total_jobs     += part_cr_ptr->tot_job_cnt;
 			part_cr_ptr = part_cr_ptr->next;
 		}
-		//The job must share but its mate is not running and there is no
-		//idle node. The job can't share with another mate. The sencond if
-		//clause guarantee it.
+
 		debug5("COLOCATION: %s job_id %u node %d total_run_jobs %d run_job_cnt %d total_jobs %d tot_job_cnt %d",__func__,job_ptr->job_id,i,total_run_jobs,run_job_cnt,total_jobs,tot_job_cnt);
 		if ((total_run_jobs <= run_job_cnt) &&
 		    (total_jobs     <= tot_job_cnt)){
-			if( ((job_ptr->details->share_res == 1) && (total_run_jobs == 0)) ||
-				(job_ptr->details->share_res == 0) ){
+			//What happens is: the job need sharing, but your job mates are pending or in busy nodes
+			//so it has to execute in a new node. Or it has to execute exclusive
+            if( ((job_ptr->details->share_res == 1) && (total_run_jobs == 0)) ||
+                (job_ptr->details->share_res == 0) ){				
 				bit_set(jobmap, i);
 				count++;
 			}
@@ -680,21 +681,52 @@ static int _job_count_bitmap(struct cr_record *cr_ptr,
 	return count;
 }
 
+static int _check_node_job_count(struct cr_record *cr_ptr, bitstr_t * bitmap)
+{
+	int i, i_first, i_last;
+	int count = 0, total_jobs, total_run_jobs;
+	struct part_cr_record *part_cr_ptr;
+	
+	total_jobs = 0;
+	total_run_jobs = 0;
+	i_first = bit_ffs(bitmap);
+	i_last  = bit_fls(bitmap);
+	if (i_first == -1)	/* job has no nodes */
+		i_last = -2;
+	for (i = i_first; i <= i_last; i++) {
+		if (!bit_test(bitmap, i)) {
+			continue;
+		}
+
+		part_cr_ptr = cr_ptr->nodes[i].parts;
+		while (part_cr_ptr) {
+			total_run_jobs += part_cr_ptr->run_job_cnt;
+			total_jobs     += part_cr_ptr->tot_job_cnt;
+			part_cr_ptr = part_cr_ptr->next;
+		}
+	}
+	
+	debug5("COLOCATION: %s total_run_jobs %d  total_jobs %d",__func__,total_run_jobs,total_jobs);
+
+	return total_run_jobs;
+
+}
 /* _find_job_mate - does most of the real work for select_p_job_test(),
  *	in trying to find a suitable job to mate this one with. This is
  *	a pretty simple algorithm now, but could try to match the job
  *	with multiple jobs that add up to the proper size or a single
  *	job plus a few idle nodes. */
-static int _find_job_mate(struct job_record *job_ptr, bitstr_t *bitmap,
-			  uint32_t min_nodes, uint32_t max_nodes,
-			  uint32_t req_nodes)
+static int _find_job_mate(struct cr_record *cr_ptr, struct job_record *job_ptr,
+			  bitstr_t *bitmap, uint32_t min_nodes, uint32_t max_nodes,
+			  uint32_t req_nodes, int max_share)
 {
 	ListIterator job_iterator;
 	struct job_record *job_scan_ptr;
 	int rc = EINVAL;
 
-	job_iterator = list_iterator_create(job_list);
+	job_iterator = list_iterator_create(job_ptr->job_ptr_mate);
 	while ((job_scan_ptr = (struct job_record *) list_next(job_iterator))) {
+		debug5("COLOCATION: %s job_id %u mate %u of %d",__func__,job_ptr->job_id,job_scan_ptr->job_id,list_count(job_ptr->job_ptr_mate));
 		if ((!IS_JOB_RUNNING(job_scan_ptr))			||
 		    (job_scan_ptr->node_cnt   != req_nodes)		||
 		    (job_scan_ptr->total_cpus <
@@ -716,18 +748,18 @@ static int _find_job_mate(struct job_record *job_ptr, bitstr_t *bitmap,
 				 job_scan_ptr->node_bitmap) != 0))
 			continue;	/* Excluded nodes in this job */
 
-		//Only shares if the plugin has selected the pair
-		//otherwise run alone. The double verification is in case
-		//Of the id = NO_VAL to one of them
 		//Should we verify memory requeriments as in _job_count_bitmap
 		//before actually paring the jobs?
-		if((job_scan_ptr->job_id == job_ptr->job_id_mate) &&
-			(job_ptr->job_id_mate == job_scan_ptr->job_id)){
+		//Only share if the node in which the job_mate are running has space
+		debug5("COLOCATION: %s job_id %u mate %u of %d super_set %d bitmap_size %d",__func__,job_ptr->job_id,job_scan_ptr->job_id,list_count(job_ptr->job_ptr_mate),bit_super_set(job_scan_ptr->node_bitmap,bitmap),bit_set_count(bitmap));
+		if(bit_super_set(job_scan_ptr->node_bitmap, bitmap) &&
+			(_check_node_job_count(cr_ptr, job_scan_ptr->node_bitmap) < max_share)){			
 			bit_and(bitmap, job_scan_ptr->node_bitmap);
 			job_ptr->total_cpus = job_scan_ptr->total_cpus;
 			rc = SLURM_SUCCESS;
 			break;
 		}
+		//}
 	}
 	list_iterator_destroy(job_iterator);
 	return rc;
@@ -3240,15 +3272,16 @@ static int _run_now(struct job_record *job_ptr, bitstr_t *bitmap,
 	uint16_t pass_count = 0;
 
 	orig_map = bit_copy(bitmap);
+
 	debug5("COLOCATION: %s job_id %u bitmap size %d",__func__,job_ptr->job_id, bit_set_count(bitmap));
-	if(job_ptr->details->share_res && (job_ptr->job_id_mate != NO_VAL)){
-		debug5("COLOCATION: %s job_id %u shares node, finding its mate bitmap",__func__,job_ptr->job_id);
-		rc = _find_job_mate(job_ptr, bitmap,
-			    	min_nodes,
-			    	max_nodes, req_nodes);	
+	if(job_ptr->details->share_res && (job_ptr->job_ptr_mate != NULL)){
+		debug5("COLOCATION: %s job_id %u shares node, finding its mate bitmap in %d jobs",__func__,job_ptr->job_id,list_count(job_ptr->job_ptr_mate));
+		rc = _find_job_mate(cr_ptr, job_ptr, bitmap,
+					min_nodes, max_nodes,
+					req_nodes, max_share);	
 	}
 
-	debug5("COLOCATION: %s job_id %u Job_id_mate %u rc %d max_share %d",__func__,job_ptr->job_id,job_ptr->job_id_mate,rc,max_share);
+	debug5("COLOCATION: %s job_id %u rc %d max_share %d",__func__,job_ptr->job_id,rc,max_share);
 
 	for (max_run_job=0; ((max_run_job<max_share) && (rc != SLURM_SUCCESS));
 	     max_run_job++) {
@@ -3283,7 +3316,7 @@ static int _run_now(struct job_record *job_ptr, bitstr_t *bitmap,
 			//			    max_nodes, req_nodes);
 			//	if (rc == SLURM_SUCCESS)
 			//		break;
-			//}
+			//}			
 			rc = _job_test(job_ptr, bitmap, min_nodes, max_nodes,
 				       req_nodes);
 		}

@@ -156,17 +156,24 @@ static void _load_config(void)
 static bool coalocate_candidate(struct job_record *job_ptr)
 {
 	struct job_record *job_mate;
+	uint32_t *job_id_mate;
 	bool candidate = false;
+	ListIterator job_mate_iterator;
 
 	if ((job_ptr->job_state == JOB_RUNNING)){
-		job_mate = find_job_record(job_ptr->job_id_mate);
-		if( job_mate == NULL)
+		if((job_ptr->job_ptr_mate == NULL) ||
+			(list_is_empty(job_ptr->job_ptr_mate)))
 			candidate = true; 
-		else
-			if((job_mate->job_state == JOB_RUNNING) && 
-			   (!bit_super_set(job_ptr->node_bitmap,job_mate->node_bitmap))){
-				   candidate = true;
-			   }
+		else{
+			job_mate_iterator = list_iterator_create(job_ptr->job_ptr_mate);
+			while ((job_mate = (struct job_record *) list_next(job_mate_iterator))) {
+				//if they are running but in separate nodes
+				if((job_mate->job_state == JOB_RUNNING) && 
+				   (!bit_super_set(job_ptr->node_bitmap,job_mate->node_bitmap))){
+					   candidate = true;
+				   }
+			}
+		}
 	}
 
 	if (job_ptr->job_state == JOB_PENDING)
@@ -179,7 +186,8 @@ static void _colocation_scheduling(void)
 {
 	int j, rc = SLURM_SUCCESS, job_cnt = 0;
 	bool sched = false;
-	uint32_t jobs_to_colocate = 0;
+	
+	uint32_t  jobs_to_colocate = 0;
 	List job_queue;
 	struct job_record *job_ptr;
 	ListIterator job_iterator;
@@ -193,7 +201,10 @@ static void _colocation_scheduling(void)
 	while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
 		if (coalocate_candidate(job_ptr)){
 			jobs_to_colocate++;
-			if(job_ptr->job_id_mate == NO_VAL) sched = true;
+			//at update_job function we set job_ptr_mate to NULL or empty
+			//so, if it is null the function plugin will recompute the mates 
+			//everytime, otherwise only with new jobs
+			if(job_ptr->job_ptr_mate == NULL) sched = true;
 		}
 
 		debug5("COLOCATION: job_id %u priority %u share_res %d state %u state_reason %u",job_ptr->job_id,job_ptr->priority,job_ptr->details->share_res,job_ptr->job_state,job_ptr->state_reason); 
@@ -242,6 +253,8 @@ PyObject* _create_model_input(void)
 		if(job_coaloc_limit == max_sched_job_cnt) break;
 		if (coalocate_candidate(job_ptr)){
 			job_coaloc_limit++;
+			debug5("COLOCATION: %s Freeing job_mate_list job_id %u",__func__,job_ptr->job_id);
+			FREE_NULL_LIST(job_ptr->job_ptr_mate);
 			//holding job to prevent scheduling while computing colocation
 			//job_ptr->priority = 0;
 			pTuple = PyTuple_New(2);
@@ -316,7 +329,7 @@ PyObject* _read_job_profile_file(struct job_record *job_ptr)
 
 static void _update_job_info(PyObject *pListColocation){
     PyObject *pValue;
-	int i, ngroups, colocation, rc = 0;
+	int i, j, ngroups, colocation, rc = 0;
 	uint32_t job_id;
 	struct job_record *job_ptr = NULL;
 	struct job_record *job_ptr_sec = NULL;
@@ -329,27 +342,32 @@ static void _update_job_info(PyObject *pListColocation){
 		pValue = PyList_GetItem(pListColocation,i);
 		colocation = PyList_GET_SIZE(pValue);
 		if(colocation > 1){
-
+			
 			job_id = (uint32_t) PyFloat_AsDouble(PyList_GetItem(pValue,0));
 			if ((job_ptr = find_job_record(job_id)) == NULL) {
 				debug5("colocation: %s could not find job %u",__func__,job_id);
 			}
-
-			job_id = (uint32_t) PyFloat_AsDouble(PyList_GetItem(pValue,1));
-			if ((job_ptr_sec = find_job_record(job_id)) == NULL) {
-				debug5("colocation: %s could not find job %u",__func__,job_id);
+			if(job_ptr->job_ptr_mate == NULL){
+				//Create list with null, because when removing an item it will not be deallocated
+				job_ptr->job_ptr_mate = list_create(NULL);
 			}
-			
 			job_ptr->details->share_res = 1;
-			job_ptr_sec->details->share_res = 1;
-			job_ptr_sec->priority = MAX(job_ptr_sec->initial_priority,job_ptr->initial_priority);
-			job_ptr->priority = MAX(job_ptr_sec->initial_priority,job_ptr->initial_priority);
 
-			job_ptr->job_id_mate = job_ptr_sec->job_id;
-			job_ptr_sec->job_id_mate = job_ptr->job_id;
+			for(j = 1; j < colocation; j++ ){
+				job_id = (uint32_t) PyFloat_AsDouble(PyList_GetItem(pValue,j));
+				if ((job_ptr_sec = find_job_record(job_id)) == NULL) {
+					debug5("colocation: %s could not find job %u",__func__,job_id);
+				}
+				if(job_ptr_sec->job_ptr_mate == NULL){
+					//Create list with null, because when removing an item it will not be deallocated
+					job_ptr_sec->job_ptr_mate = list_create(NULL);
+				}
 
-			debug5("colocation: %s Jobs to share node jobid1 = %u jobid2 = %u priority = %u.",__func__,job_ptr->job_id,job_ptr_sec->job_id,job_ptr->priority);
-			
+				list_append(job_ptr_sec->job_ptr_mate,job_ptr);
+				list_append(job_ptr->job_ptr_mate,job_ptr_sec);
+				job_ptr_sec->details->share_res = 1;
+				debug5("colocation: %s Jobs to share node jobid1 = %u jobid2 = %u priority = %u.",__func__,job_ptr->job_id,job_ptr_sec->job_id,job_ptr->priority);
+			}			
 		}
 		else{
 
@@ -359,10 +377,10 @@ static void _update_job_info(PyObject *pListColocation){
 			}
 
 			job_ptr->details->share_res = 0;
-			//If job_id_mat is NO_VAL, the plugin will always check if a new combination is possible with previous jobs
-			//If it is NO_VAL - 1, the plugin will only check new combinations when new jobs arrive.
-			job_ptr->job_id_mate = NO_VAL;
-			job_ptr->priority = job_ptr->initial_priority;
+			//If job_id_mat is NULL, the plugin will always check if a new combination is possible with previous jobs
+			//If it is empty, the plugin will only check new combinations when new jobs arrive.
+			FREE_NULL_LIST(job_ptr->job_ptr_mate);
+			//job_ptr->job_id_mate = list_create(NULL);
 			debug5("colocation: %s Jobs to execute alone jobid = %u priority %u.",__func__,job_ptr->job_id,job_ptr->priority);
 		}
 	}
