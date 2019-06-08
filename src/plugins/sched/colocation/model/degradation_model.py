@@ -169,7 +169,7 @@ def colocation_pairs(queue, degradation_limit):
 					res_dic[tup[0]].append(tup[1])
 			for key in res_dic.keys():
 				list_mate = res_dic[key]
-				schedule_s.append([key] + sorted(list_mate))
+				schedule_s.append([key] + list_mate)
 
 			#Expected output: [(100, 110, 48.87919939668854), (200, 210, 48.87919939668854), (120, 220, 158.60837249631868)]
 			#for tup in schedule:

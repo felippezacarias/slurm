@@ -9234,9 +9234,9 @@ static int _delete_job_mate_by_id(void *object, void *arg)
 	uint32_t job_id          = *(uint32_t *)arg;
 
 	if (job_info->job_id == job_id)
-		return true;
+		return 1;
 
-	return false;
+	return 0;
 }
 
 /*
@@ -9297,7 +9297,7 @@ static void _list_delete_job(void *job_entry)
 	FREE_NULL_LIST(job_ptr->gres_list);
 
 	xfree(job_ptr->hwprofile);
-	//Clean jobid from jobmate
+	//Clean my jobid from all my jobmates list
 	struct job_record *job_mate;
 	ListIterator job_mate_iterator;
 	job_mate_iterator = list_iterator_create(job_ptr->job_ptr_mate);

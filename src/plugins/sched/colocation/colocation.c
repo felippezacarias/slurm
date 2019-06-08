@@ -28,16 +28,20 @@
 #include "src/common/list.h"
 #include "src/common/macros.h"
 #include "src/common/node_select.h"
+#include "src/slurmctld/node_scheduler.h"
 #include "src/common/parse_time.h"
+#include "src/common/power.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
 #include "src/slurmctld/burst_buffer.h"
+#include "src/slurmctld/job_scheduler.h"
 #include "src/slurmctld/locks.h"
 #include "src/slurmctld/preempt.h"
 #include "src/slurmctld/reservation.h"
 #include "src/slurmctld/slurmctld.h"
+#include "src/slurmctld/srun_comm.h"
 #include "src/plugins/sched/colocation/colocation.h"
 
 #ifndef COLOCATION_INTERVAL
@@ -65,10 +69,12 @@ uint32_t previous_jobs_to_colocate = 0;
 
 /*********************** local functions *********************/
 static void _colocation_scheduling(void);
+static void _attempt_colocation(void);
 static void _load_config(void);
 static void _my_sleep(int secs);
 static void _compute_colocation_pairs(PyObject *pList);
 static bool coalocate_candidate(struct job_record *job_ptr);
+static int _find_job_mate_by_id(void *object, void *arg);
 PyObject* _read_job_profile_file(struct job_record *job_ptr);
 PyObject* _create_model_input(void);
 static void _update_job_info(PyObject *pListColocation);
@@ -160,7 +166,7 @@ static bool coalocate_candidate(struct job_record *job_ptr)
 	bool candidate = false;
 	ListIterator job_mate_iterator;
 
-	if ((job_ptr->job_state == JOB_RUNNING)){
+	if (IS_JOB_RUNNING(job_ptr)){
 		if((job_ptr->job_ptr_mate == NULL) ||
 			(list_is_empty(job_ptr->job_ptr_mate)))
 			candidate = true; 
@@ -168,18 +174,34 @@ static bool coalocate_candidate(struct job_record *job_ptr)
 			job_mate_iterator = list_iterator_create(job_ptr->job_ptr_mate);
 			while ((job_mate = (struct job_record *) list_next(job_mate_iterator))) {
 				//if they are running but in separate nodes
-				if((job_mate->job_state == JOB_RUNNING) && 
+				if((IS_JOB_RUNNING(job_mate)) && 
 				   (!bit_super_set(job_ptr->node_bitmap,job_mate->node_bitmap))){
 					   candidate = true;
-				   }
+				//they are running together, became false and break the loop
+				}else if((IS_JOB_RUNNING(job_mate)) && 
+				   		(bit_super_set(job_ptr->node_bitmap,job_mate->node_bitmap))){
+					   	candidate = false;
+						break;
+				}
 			}
 		}
 	}
 
-	if (job_ptr->job_state == JOB_PENDING)
+	if (IS_JOB_PENDING(job_ptr))
 		candidate = true;
 
 	return candidate;
+}
+
+static int _find_job_mate_by_id(void *object, void *arg)
+{
+	struct job_record *job_info = (struct job_record *)object;
+	uint32_t job_id          = *(uint32_t *)arg;
+
+	if (job_info->job_id == job_id)
+		return 1;
+
+	return 0;
 }
 
 static void _colocation_scheduling(void)
@@ -194,9 +216,7 @@ static void _colocation_scheduling(void)
 	job_queue_rec_t *job_queue_rec;
 	PyObject *pList = NULL;
 
-	debug5("COLOCATION: %s colocation_job_list count = %d is empty = %d.",__func__,list_count(colocation_job_list),list_is_empty(colocation_job_list));
-
-	debug5("COLOCATION: %s entrou first time",__func__);
+	debug5("COLOCATION: %s",__func__);
 	job_iterator = list_iterator_create(job_list);		
 	while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
 		if (coalocate_candidate(job_ptr)){
@@ -204,10 +224,15 @@ static void _colocation_scheduling(void)
 			//at update_job function we set job_ptr_mate to NULL or empty
 			//so, if it is null the function plugin will recompute the mates 
 			//everytime, otherwise only with new jobs
-			if(job_ptr->job_ptr_mate == NULL) sched = true;
+			if(job_ptr->job_ptr_mate == NULL){
+				sched = true;
+			}
+			else{
+				debug5("COLOCATION: job_id %u mate_is_empty %d count %u",job_ptr->job_id,list_is_empty(job_ptr->job_ptr_mate),list_count(job_ptr->job_ptr_mate)); 
+			}
 		}
 
-		debug5("COLOCATION: job_id %u priority %u share_res %d state %u state_reason %u",job_ptr->job_id,job_ptr->priority,job_ptr->details->share_res,job_ptr->job_state,job_ptr->state_reason); 
+		debug5("COLOCATION: job_id %u share_res %d state %u state_reason %u",job_ptr->job_id,job_ptr->details->share_res,job_ptr->job_state,job_ptr->state_reason); 
 	}
 	list_iterator_destroy(job_iterator);
 
@@ -224,7 +249,64 @@ static void _colocation_scheduling(void)
 		_compute_colocation_pairs(pList);
 		debug5("COLOCATION: %s After _compute_colocation_pairs!",__func__);
 		Py_XDECREF(pList);
+
+		//It possible may cause a job stravation, but for sure will increase the
+		//wait time for a non shared job
+		_attempt_colocation();
+		debug5("COLOCATION: %s After _attempt_colocation!",__func__);
+
 	}
+}
+
+static void _attempt_colocation(void)
+{
+	int j, rc = SLURM_SUCCESS, job_cnt = 0;
+	uint32_t  jobs_to_colocate = 0;
+	struct job_record *job_ptr, *job_ptr_mate;
+	ListIterator job_iterator;
+	
+	debug5("COLOCATION: %s",__func__);
+	job_iterator = list_iterator_create(job_list);		
+	while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
+		if(jobs_to_colocate == max_sched_job_cnt) break;
+		jobs_to_colocate++;
+		if (!IS_JOB_PENDING(job_ptr))
+			continue;
+
+		debug5("COLOCATION: %s Trying schedule job %u",__func__,job_ptr->job_id);
+		rc = select_nodes(job_ptr, false, NULL, NULL, false);
+
+		if (rc == SLURM_SUCCESS) {
+			/* job initiated */
+			char job_id_str[64];			
+			debug5("COLOCATION: %s Started %s in %s on %s",__func__,
+				jobid2fmt(job_ptr, job_id_str, sizeof(job_id_str)),
+				job_ptr->part_ptr->name, job_ptr->nodes);
+			power_g_job_start(job_ptr);
+			if (job_ptr->batch_flag == 0)
+				srun_allocate(job_ptr->job_id);
+			else if (
+	#ifdef HAVE_BG
+				/*
+				* On a bluegene system we need to run the prolog
+				* while the job is CONFIGURING so this can't work
+				* off the CONFIGURING flag as done elsewhere.
+				*/
+				!job_ptr->details ||
+				!job_ptr->details->prolog_running
+	#else
+				!IS_JOB_CONFIGURING(job_ptr)
+	#endif
+				)
+				launch_job(job_ptr);
+
+		} else {
+			debug5("COLOCATION: %s Failed to start JobId=%u: %s",__func__,
+				job_ptr->job_id, slurm_strerror(rc));
+		}
+
+	}
+	list_iterator_destroy(job_iterator);
 }
 
 PyObject* _create_model_input(void)
@@ -358,16 +440,14 @@ static void _update_job_info(PyObject *pListColocation){
 				if ((job_ptr_sec = find_job_record(job_id)) == NULL) {
 					debug5("colocation: %s could not find job %u",__func__,job_id);
 				}
-				if(job_ptr_sec->job_ptr_mate == NULL){
-					//Create list with null, because when removing an item it will not be deallocated
-					job_ptr_sec->job_ptr_mate = list_create(NULL);
-				}
-
-				list_append(job_ptr_sec->job_ptr_mate,job_ptr);
-				list_append(job_ptr->job_ptr_mate,job_ptr_sec);
-				job_ptr_sec->details->share_res = 1;
+				
+				//struct job_record *job_ptr_find = list_find_first(job_ptr->job_ptr_mate, _find_job_mate_by_id,
+				//   &(job_ptr_sec->job_id));
+				//if(job_ptr_find == NULL)
+				list_enqueue(job_ptr->job_ptr_mate,job_ptr_sec);
+				//job_ptr_sec->details->share_res = 1;
 				debug5("colocation: %s Jobs to share node jobid1 = %u jobid2 = %u priority = %u.",__func__,job_ptr->job_id,job_ptr_sec->job_id,job_ptr->priority);
-			}			
+			}		
 		}
 		else{
 
@@ -378,9 +458,9 @@ static void _update_job_info(PyObject *pListColocation){
 
 			job_ptr->details->share_res = 0;
 			//If job_id_mat is NULL, the plugin will always check if a new combination is possible with previous jobs
-			//If it is empty, the plugin will only check new combinations when new jobs arrive.
 			FREE_NULL_LIST(job_ptr->job_ptr_mate);
-			//job_ptr->job_id_mate = list_create(NULL);
+			//If it is empty, the plugin will only check new combinations when new jobs arrive.
+			job_ptr->job_ptr_mate = list_create(NULL);
 			debug5("colocation: %s Jobs to execute alone jobid = %u priority %u.",__func__,job_ptr->job_id,job_ptr->priority);
 		}
 	}
@@ -423,16 +503,13 @@ static void _compute_colocation_pairs(PyObject *pList)
 					return;
 				} 
 				debug5("Colocation: %s after PyObject_CallObject value is_list %d value size %d type_res %s",__func__,PyList_Check(pValue),PyList_GET_SIZE(pValue),PyString_AsString(PyObject_Str(pValue)));
-				pValue2 = PyList_GetItem(pValue,0);
-				debug5("Colocation: %s Result of call: %f",__func__,PyFloat_AsDouble(PyList_GetItem(pValue2,0)));
-				debug5("Colocation: %s Result of call: %f",__func__,PyFloat_AsDouble(PyList_GetItem(pValue2,1)));
+
 				_update_job_info(pValue);
 
 
 				Py_DECREF(pArgs);
                 Py_DECREF(pValue);
 				Py_XDECREF(pList);
-				Py_XDECREF(pValue2);
             }
             else {
                 PyErr_Print();

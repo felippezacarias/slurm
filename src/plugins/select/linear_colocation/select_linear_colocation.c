@@ -724,9 +724,12 @@ static int _find_job_mate(struct cr_record *cr_ptr, struct job_record *job_ptr,
 	struct job_record *job_scan_ptr;
 	int rc = EINVAL;
 
+	if(list_is_empty(job_ptr->job_ptr_mate))
+		return rc;
+
 	job_iterator = list_iterator_create(job_ptr->job_ptr_mate);
 	while ((job_scan_ptr = (struct job_record *) list_next(job_iterator))) {
-		debug5("COLOCATION: %s job_id %u mate %u of %d",__func__,job_ptr->job_id,job_scan_ptr->job_id,list_count(job_ptr->job_ptr_mate));
+		debug5("COLOCATION: %s job_id %u mate_id %u tot %d",__func__,job_ptr->job_id,job_scan_ptr->job_id,list_count(job_ptr->job_ptr_mate));
 		if ((!IS_JOB_RUNNING(job_scan_ptr))			||
 		    (job_scan_ptr->node_cnt   != req_nodes)		||
 		    (job_scan_ptr->total_cpus <
@@ -751,7 +754,7 @@ static int _find_job_mate(struct cr_record *cr_ptr, struct job_record *job_ptr,
 		//Should we verify memory requeriments as in _job_count_bitmap
 		//before actually paring the jobs?
 		//Only share if the node in which the job_mate are running has space
-		debug5("COLOCATION: %s job_id %u mate %u of %d super_set %d bitmap_size %d",__func__,job_ptr->job_id,job_scan_ptr->job_id,list_count(job_ptr->job_ptr_mate),bit_super_set(job_scan_ptr->node_bitmap,bitmap),bit_set_count(bitmap));
+		debug5("COLOCATION: %s job_id %u mate_id %u tot %d super_set %d bitmap_size %d",__func__,job_ptr->job_id,job_scan_ptr->job_id,list_count(job_ptr->job_ptr_mate),bit_super_set(job_scan_ptr->node_bitmap,bitmap),bit_set_count(bitmap));
 		if(bit_super_set(job_scan_ptr->node_bitmap, bitmap) &&
 			(_check_node_job_count(cr_ptr, job_scan_ptr->node_bitmap) < max_share)){			
 			bit_and(bitmap, job_scan_ptr->node_bitmap);

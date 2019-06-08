@@ -32,6 +32,7 @@ cp $ROOT/counters/* /tmp/
 rm /tmp/SLURM_PYTHON_*
 #rm /tmp/SLURM_PYTHON_GREEDY_ERROR.txt
 rm $INSTALL/slurm_varios/var/state/* -r
+rm $INSTALL/slurm_varios/var/spool/* -r
 
 export PYTHONPATH=$PYTHONPATH:$INSTALL/slurm_varios/lib/degradation_model
 export LD_PRELOAD=/usr/lib/libpython2.7.so.1.0
