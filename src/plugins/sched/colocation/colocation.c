@@ -61,11 +61,9 @@ static int colocation_interval = COLOCATION_INTERVAL;
 static int max_sched_job_cnt = COLOCATION_LIMIT;
 static int sched_timeout = 0;
 static double degradation_limit = -1.0;
-static List colocation_job_list = (List) NULL;
 PyObject *pModule;
 PyObject *pFunc = NULL;
 uint32_t priority = NO_VAL - 1;
-uint32_t previous_jobs_to_colocate = 0;
 
 /*********************** local functions *********************/
 static void _colocation_scheduling(void);
@@ -89,12 +87,6 @@ extern void stop_colocation_agent(void)
 	slurm_cond_signal(&term_cond);
 	slurm_mutex_unlock(&term_lock);
 }
-
-static void _colocation_job_list_del(void *x)
-{
-	xfree(x);
-}
-
 
 static void _my_sleep(int secs)
 {
@@ -252,6 +244,7 @@ static void _colocation_scheduling(void)
 
 		//It possible may cause a job stravation, but for sure will increase the
 		//wait time for a non shared job
+		//Possible solution: schedule number of jobs = half number of available nodes
 		_attempt_colocation();
 		debug5("COLOCATION: %s After _attempt_colocation!",__func__);
 
@@ -547,10 +540,6 @@ extern void *colocation_agent(void *args)
 
 	_load_config();
 
-	//Initializing colocation structure
-	FREE_NULL_LIST(colocation_job_list);
-	colocation_job_list = list_create(NULL);
-
 	Py_Initialize();
     pName = PyString_FromString("degradation_model"); 
 
@@ -584,6 +573,5 @@ extern void *colocation_agent(void *args)
     Py_XDECREF(pModule);
 	Py_XDECREF(pFunc);
 	Py_Finalize();
-	FREE_NULL_LIST(colocation_job_list);
 	return NULL;
 }
