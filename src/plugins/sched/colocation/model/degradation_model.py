@@ -196,6 +196,160 @@ def colocation_pairs(queue, degradation_limit):
 			#print('Filename:', str(e), file=f)  # Python 3.x
 		f.closed
 
+def colocation_graph_coloring(queue, degradation_limit):
+
+	try:
+		import sys
+			
+		import pickle
+
+		#Depois colocar esse "/opt/slurm/lib/degradation_model/" pra 
+		#ser pego da variável de ambiente
+		sys.path.insert(0, '/opt/slurm/lib/degradation_model/graph/')
+		#Arquivo apenas necessário para propósitos de debug
+		#with open('/tmp/PYTHON_PATH.txt', 'a') as f:
+		#	print >> f, 'Filename:', sys.path  # Python 2.x
+		#Importing graph structure
+		from grafo import Grafo
+
+		graph = Grafo()
+		schedule = []
+		apps_counters = {}
+		joblist = []
+
+
+		#creating dictionary for building degradation graph
+		for job in queue:
+			jobid = job[0]
+			apps_counters[jobid] = job[1]
+			joblist.append(jobid)
+
+		#Load machine learning model
+		loaded_model = pickle.load(open("/opt/slurm/lib/degradation_model/mlpregressor.sav", 'rb'))
+		#Load scaling used on training fase
+		scaling_model = pickle.load(open("/opt/slurm/lib/degradation_model/scaling.sav", 'rb'))
+
+		#For each job create degradation graph
+		for jobMain in joblist:
+			for jobSecond in joblist:
+				if(jobMain != jobSecond):
+					prediction = apps_counters[jobMain] + apps_counters[jobSecond]
+					prediction_normalized = scaling_model.transform([prediction])
+					degradationMain = loaded_model.predict(prediction_normalized)
+
+					prediction = apps_counters[jobSecond] + apps_counters[jobMain]
+					prediction_normalized = scaling_model.transform([prediction])
+					degradationSecond = loaded_model.predict(prediction_normalized)
+							
+					if max(degradationMain[0], degradationSecond[0]) > degradation_limit:
+						graph.add_aresta(jobMain, jobSecond, max(degradationMain[0], degradationSecond[0]))
+
+
+		#Apply the coloring graph to get the result
+		result = graph_coloring(graph)
+		schedule_s = []
+
+		with open('/tmp/SLURM_PYTHON_SCHEDULE_DEBUG.txt', 'a') as f:
+			print >> f, 'EXECUTION:'  # Python 2.x
+			print >> f, 'COLORING RESULT: ', result
+			
+            color = {}
+			res_dic = {}
+			for jobid in result.keys():
+				if not result[jobid] in color:
+					color[result[jobid]] = []
+				color[result[jobid]].append(jobid)
+			for cr in color.keys():
+				for job in color[cr]:
+					new_list = list(color[cr])
+					new_list.remove(job)
+					schedule_s.append([job] + new_list)
+				
+			#Expected output: 
+			#[(100, [110, 200, 210]), (110, [100, 200, 210]), (120, []), (200, [100, 110, 210]), (210, [100, 110, 200]), (220, [])]
+			for tup in greedy_list:
+				if not tup[0] in res_dic:
+					res_dic[tup[0]] = []
+				if not tup[1] in res_dic:
+					res_dic[tup[1]] = []
+				if(tup[2] < degradation_limit):
+					res_dic[tup[1]].append(tup[0])
+					res_dic[tup[0]].append(tup[1])
+			for key in res_dic.keys():
+				list_mate = res_dic[key]
+				schedule_s.append([key] + list_mate)
+
+			#Expected output: [(100, 110, 48.87919939668854), (200, 210, 48.87919939668854), (120, 220, 158.60837249631868)]
+			#for tup in schedule:
+			#	degradation = tup[2]
+			#	if(degradation > degradation_limit):
+			#			schedule_s.append([tup[0]])
+			#			schedule_s.append([tup[1]])
+			#	else:
+			#			schedule_s.append(sorted((tup[0], tup[1])))
+			#schedule_s = sorted(schedule_s, key=lambda tup: tup[0])
+
+			schedule_s = sorted(schedule_s, key=lambda list_: list_[0])
+			print >> f, 'FINAL SCHEDULE: ', schedule_s  # Python 2.x		
+
+		return schedule_s
+
+	except Exception, e:
+		with open('/tmp/SLURM_PYTHON_ERROR.txt', 'a') as f:
+			print >> f, 'Filename:', type(e)  # Python 2.x
+			print >> f, 'Filename:', str(e)  # Python 2.x
+			print >> f, 'queue:', queue  # Python 2.x
+			print >> f, 'Filename:', type(queue)  # Python 2.x
+			for job in queue:
+				print >> f, 'type job[0]',type(job[0])
+				print >> f, 'type job[1]',type(job[1])				
+				print >> f, '++++++++++++++++++++++++:'  # Python 2.x
+			print >> f, 'degradation_limit:', degradation_limit  # Python 2.x
+			print >> f, 'Filename:', type(degradation_limit)  # Python 2.x
+			#print('Filename:', str(e), file=f)  # Python 3.x
+		f.closed
+
+def graph_coloring(graph):
+	# Initialize structures
+	result = {}
+	V = graph.vertices()
+	
+	# Assign the first color to the first vertex
+	result[V[0]] = 0
+
+	# Initialize the remaining vetex without color
+	for i in range(1,len(V)):
+		result[V[i]] = -1
+	
+	# Temporary array to hold the available colors,
+	# If it is false means the color cr is assigned to
+	# one of its adjacent vertices
+	available = {}
+	for cr in range(0,len(V)):
+		available[cr] = True
+	
+	# Assign color to remaining vertices
+	for i in range(1,len(V)):
+		# Process neighbours of Vertex v[i]
+		for u in graph.vizinhos(V[i]):
+			if result[u] != -1:
+				available[result[u]] = False
+	
+		# Find the first available color
+		color = -1
+		for cr in range(0,len(V)):
+			if available[cr] == True:
+				color = cr
+				break
+		
+		result[V[i]] = color
+
+		# Reseting available colors for the next interation
+		for u in graph.vizinhos(V[i]):
+			if result[u] != -1:
+				available[result[u]] = True
+	
+	return result
 
 
 def colocation_pairs2(queue, degradation_limit):
