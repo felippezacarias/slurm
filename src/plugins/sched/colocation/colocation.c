@@ -49,6 +49,9 @@
 #endif
 
 #define COLOCATION_LIMIT	100
+#define DEFAULT_COLOCATION_FUNCTION       "optimal"
+#define DEFAULT_COLOCATION_MODEL       	  "mlpregressor.sav"
+#define DEFAULT_MODULE_NAME				  "degradation_model"
 
 #define HARDWARE_COUNTER_STRING_SIZE 12056
 
@@ -61,6 +64,8 @@ static int colocation_interval = COLOCATION_INTERVAL;
 static int max_sched_job_cnt = COLOCATION_LIMIT;
 static int sched_timeout = 0;
 static double degradation_limit = -1.0;
+static char *colocation_function = NULL;
+static char *colocation_model = NULL;
 PyObject *pModule;
 PyObject *pFunc = NULL;
 uint32_t priority = NO_VAL - 1;
@@ -136,7 +141,28 @@ static void _load_config(void)
 		degradation_limit = 100.0;
 	}
 
-	debug5("COLOCATION: %s degradation_limit=%f max_colocation_sched=%d",__func__,degradation_limit,max_sched_job_cnt);
+	xfree(colocation_function);
+	if ((tmp_ptr = strstr(sched_params, "colocation_function="))) {
+		colocation_function = xstrdup(tmp_ptr + 20);
+		tmp_ptr = strchr(colocation_function, ',');
+		if (tmp_ptr)
+			tmp_ptr[0] = '\0';
+	} else {
+		colocation_function = xstrdup(DEFAULT_COLOCATION_FUNCTION);
+	}
+
+	xfree(colocation_model);
+	if ((tmp_ptr = strstr(sched_params, "colocation_model="))) {
+		colocation_model = xstrdup(tmp_ptr + 17);
+		tmp_ptr = strchr(colocation_model, ',');
+		if (tmp_ptr)
+			tmp_ptr[0] = '\0';
+	} else {
+		colocation_model = xstrdup(DEFAULT_COLOCATION_MODEL);
+	}
+
+	debug5("COLOCATION: %s degradation_limit=%f max_colocation_sched=%d, colocation_model=%s, colocation_function=%s",
+			__func__,degradation_limit,max_sched_job_cnt,colocation_model,colocation_function);
 
 	
 	xfree(sched_params);
@@ -244,7 +270,7 @@ static void _colocation_scheduling(void)
 
 		//It possible may cause a job stravation, but for sure will increase the
 		//wait time for a non shared job
-		//Possible solution: schedule number of jobs = half number of available nodes
+		// TODO: Possible solution: schedule number of jobs = half number of available nodes
 		_attempt_colocation();
 		debug5("COLOCATION: %s After _attempt_colocation!",__func__);
 
@@ -466,11 +492,11 @@ static void _compute_colocation_pairs(PyObject *pList)
 	debug5("Colocation: %s Initiated input size %d.",__func__,PyList_GET_SIZE(pList) );
 
     if (pModule != NULL) {
-        if(pFunc == NULL) pFunc = PyObject_GetAttrString(pModule, "colocation_pairs");
+        if(pFunc == NULL) pFunc = PyObject_GetAttrString(pModule, colocation_function);
         /* pFunc is a new reference */
 
         if (pFunc && PyCallable_Check(pFunc)) {
-            pArgs = PyTuple_New(2);
+            pArgs = PyTuple_New(3);
 			//Setting hardware counters list
 			PyTuple_SetItem(pArgs, 0, pList);
 			
@@ -487,6 +513,8 @@ static void _compute_colocation_pairs(PyObject *pList)
 			//Setting degradation limit to colocate jobs
 			PyTuple_SetItem(pArgs, 1, PyFloat_FromDouble(degradation_limit));
 
+			//Setting model to be used to colocate jobs
+			PyTuple_SetItem(pArgs, 2, PyString_FromString(colocation_model));
 
 			debug5("COLOCATION: function %s calling PyObject_CallObject",__func__);
 			pValue = PyObject_CallObject(pFunc, pArgs);
@@ -541,7 +569,7 @@ extern void *colocation_agent(void *args)
 	_load_config();
 
 	Py_Initialize();
-    pName = PyString_FromString("degradation_model"); 
+    pName = PyString_FromString(DEFAULT_MODULE_NAME); 
 
 	pModule = PyImport_Import(pName);
     Py_DECREF(pName);
@@ -570,6 +598,8 @@ extern void *colocation_agent(void *args)
 		(void) bb_g_job_try_stage_in();
 		unlock_slurmctld(all_locks);
 	}
+	xfree(colocation_function);
+	xfree(colocation_model);
     Py_XDECREF(pModule);
 	Py_XDECREF(pFunc);
 	Py_Finalize();

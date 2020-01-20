@@ -44,10 +44,10 @@ must be set:**
 
   PYTHONPATH        [ ]
      This environment variable must point to the degradation model folder.
-     The folder contains the python script that will be used by the colocation
+     The folder contains the python script and modules that will be used by the colocation
      plugin for compute the degradation between jobs. Ex:
 
-     export PYTHONPATH=$PYTHONPATH:${install_folder}/slurm_varios/lib/degradation_model
+     export PYTHONPATH=$PYTHONPATH:${install_folder}/slurm_varios/lib/degradation_model:${install_folder}/slurm_varios/lib/degradation_model/graph
   
   LD_PRELOAD        [ ]
      This environment variable must point to the python shared lib. This variable is
@@ -68,6 +68,26 @@ the colocation plugin:
  - Python 
  - Numpy
  - Scikit-learn
+
+SCHEDULING PARAMETERS
+---------------------
+
+To use diferent models or functions to create the colocation, the following variables can be used:
+ - colocation_model (default:mlpregressor.sav)
+  - linear_regression.sav
+  - mlpregressor.sav
+ - colocation_function (default:optimal)
+  - optimal: Computes the pairs applying the blossom algorithm to a degradation graph
+  - greedy: Uses a greedy algorithm to select pairs with lowest degradation
+  - graph_coloring: Applies a graph coloring algorithm to assemble the pairs.
+ - max_colocation_sched (default: 100)
+   Max number of jobs considered when computing colocation pairs.
+ - max_degradation (default: 100%)
+   Predicted degradations higher than the threshold are not considered as colocation pair.
+
+Example:
+  **SchedulerParameters=max_colocation_sched=50,max_degradation=120,colocation_model=linear_regression.sav,colocation_function=greedy**
+
 
 SOURCE DISTRIBUTION HIERARCHY
 -----------------------------
