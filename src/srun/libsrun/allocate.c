@@ -949,6 +949,9 @@ static job_desc_msg_t *_job_desc_msg_create_from_opts(slurm_opt_t *opt_local)
 
 	j->req_nodes      = xstrdup(opt_local->nodelist);
 
+	if(opt_local->hwprofile) 
+		j->hwprofile = xstrdup(opt_local->hwprofile);
+
 	/* simplify the job allocation nodelist,
 	 * not laying out tasks until step */
 	if (j->req_nodes) {

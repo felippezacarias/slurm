@@ -218,6 +218,8 @@
 #define LONG_OPT_GPUS_PER_SOCKET 0x177
 #define LONG_OPT_GPUS_PER_TASK   0x178
 #define LONG_OPT_MEM_PER_GPU     0x179
+#define LONG_OPT_APPLICATION_HARDWARE_PROFILE 0x180
+
 
 extern char **environ;
 
@@ -251,6 +253,7 @@ struct option long_options[] = {
 	{"geometry",         required_argument, 0, 'g'},
 	{"gpus",             required_argument, 0, 'G'},
 	{"hold",             no_argument,       0, 'H'},
+	{"hwprofile",     required_argument, 0, LONG_OPT_APPLICATION_HARDWARE_PROFILE},
 	{"input",            required_argument, 0, 'i'},
 	{"immediate",        optional_argument, 0, 'I'},
 	{"join",             no_argument,       0, 'j'},
@@ -2458,6 +2461,12 @@ static void _set_options(const int argc, char **argv)
 			else
 				opt.x11 = X11_FORWARD_ALL;
 			break;
+		case LONG_OPT_APPLICATION_HARDWARE_PROFILE:
+			if (!optarg)
+				break;	/* Fix for Coverity false positive */
+			xfree(opt.hwprofile);
+			opt.hwprofile = xstrdup(optarg);
+			break;
 		default:
 			if (spank_process_option (opt_char, optarg) < 0)
 				exit(error_exit);
@@ -3432,7 +3441,7 @@ static void _usage(void)
  	printf(
 "Usage: srun [-N nnodes] [-n ntasks] [-i in] [-o out] [-e err]\n"
 "            [-c ncpus] [-r n] [-p partition] [--hold] [-t minutes]\n"
-"            [-D path] [--immediate[=secs]] [--overcommit] [--no-kill]\n"
+"            [-D path] [--immediate[=secs]] [--overcommit] [--hwprofile=file] [--no-kill]\n"
 "            [--oversubscribe] [--label] [--unbuffered] [-m dist] [-J jobname]\n"
 "            [--jobid=id] [--verbose] [--slurmd_debug=#] [--gres=list]\n"
 "            [-T threads] [-W sec] [--checkpoint=time] [--gres-flags=opts]\n"
@@ -3511,6 +3520,7 @@ static void _help(void)
 "      --gres=list             required generic resources\n"
 "      --gres-flags=opts       flags related to GRES management\n"
 "  -H, --hold                  submit job in held state\n"
+"      --hwprofile=file        set file path for application hardware counters\n"
 "  -i, --input=in              location of stdin redirection\n"
 "  -I, --immediate[=secs]      exit if resources not available in \"secs\"\n"
 "      --jobid=id              run under already allocated job\n"
