@@ -17,6 +17,9 @@ def optimal(queue, degradation_limit, model_name):
 		apps_counters = {}
 		joblist = []
 
+		#Dealing with odd queue
+		if len(queue) % 2:
+			del queue[-1]
 
 		#creating dictionary for building degradation graph
 		for job in queue:
@@ -100,7 +103,6 @@ def greedy(queue, degradation_limit, model_name):
 		greedy_list = []
 		list_jobid = []
 		schedule_s = []
-
 
 		#creating dictionary for building degradation graph
 		for job in queue:

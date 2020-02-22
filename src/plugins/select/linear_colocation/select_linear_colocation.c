@@ -663,7 +663,8 @@ static int _job_count_bitmap(struct cr_record *cr_ptr,
 			part_cr_ptr = part_cr_ptr->next;
 		}
 
-		debug5("COLOCATION: %s job_id %u node %d total_run_jobs %d run_job_cnt %d total_jobs %d tot_job_cnt %d",__func__,job_ptr->job_id,i,total_run_jobs,run_job_cnt,total_jobs,tot_job_cnt);
+		debug5("COLOCATION: %s job_id %u node %d total_run_jobs %d run_job_cnt %d total_jobs %d tot_job_cnt %d",
+				__func__,job_ptr->job_id,i,total_run_jobs,run_job_cnt,total_jobs,tot_job_cnt);
 		if ((total_run_jobs <= run_job_cnt) &&
 		    (total_jobs     <= tot_job_cnt)){
 			//What happens is: the job need sharing, but your job mates are pending or in busy nodes
@@ -706,7 +707,8 @@ static int _check_node_job_count(struct cr_record *cr_ptr, bitstr_t * bitmap)
 		}
 	}
 	
-	debug5("COLOCATION: %s total_run_jobs %d  total_jobs %d",__func__,total_run_jobs,total_jobs);
+	debug5("COLOCATION: %s total_run_jobs %d  total_jobs %d",
+			__func__,total_run_jobs,total_jobs);
 
 	return total_run_jobs;
 
@@ -730,7 +732,8 @@ static int _find_job_mate(struct cr_record *cr_ptr, struct job_record *job_ptr,
 	job_iterator = list_iterator_create(job_ptr->job_ptr_mate);
 	// TODO: check if the jobs share the same partition
 	while ((job_scan_ptr = (struct job_record *) list_next(job_iterator))) {
-		debug5("COLOCATION: %s job_id %u mate_id %u tot %d",__func__,job_ptr->job_id,job_scan_ptr->job_id,list_count(job_ptr->job_ptr_mate));
+		debug5("COLOCATION: %s job_id %u mate_id %u tot %d",
+			__func__,job_ptr->job_id,job_scan_ptr->job_id,list_count(job_ptr->job_ptr_mate));
 		if ((!IS_JOB_RUNNING(job_scan_ptr))			||
 		    (job_scan_ptr->node_cnt   != req_nodes)		||
 		    (job_scan_ptr->total_cpus <
@@ -755,7 +758,9 @@ static int _find_job_mate(struct cr_record *cr_ptr, struct job_record *job_ptr,
 		//Should we verify memory requeriments as in _job_count_bitmap
 		//before actually paring the jobs?
 		//Only share if the node in which the job_mate are running has space
-		debug5("COLOCATION: %s job_id %u mate_id %u tot %d super_set %d bitmap_size %d",__func__,job_ptr->job_id,job_scan_ptr->job_id,list_count(job_ptr->job_ptr_mate),bit_super_set(job_scan_ptr->node_bitmap,bitmap),bit_set_count(bitmap));
+		debug5("COLOCATION: %s job_id %u mate_id %u tot %d super_set %d bitmap_size %d",
+				__func__,job_ptr->job_id,job_scan_ptr->job_id,list_count(job_ptr->job_ptr_mate),
+				bit_super_set(job_scan_ptr->node_bitmap,bitmap),bit_set_count(bitmap));
 		if(bit_super_set(job_scan_ptr->node_bitmap, bitmap) &&
 			(_check_node_job_count(cr_ptr, job_scan_ptr->node_bitmap) < max_share)){			
 			bit_and(bitmap, job_scan_ptr->node_bitmap);
@@ -3277,9 +3282,12 @@ static int _run_now(struct job_record *job_ptr, bitstr_t *bitmap,
 
 	orig_map = bit_copy(bitmap);
 
-	debug5("COLOCATION: %s job_id %u bitmap size %d",__func__,job_ptr->job_id, bit_set_count(bitmap));
+	debug5("COLOCATION: %s job_id %u bitmap size %d",
+			__func__,job_ptr->job_id, bit_set_count(bitmap));
+			
 	if(job_ptr->details->share_res && (job_ptr->job_ptr_mate != NULL)){
-		debug5("COLOCATION: %s job_id %u shares node, finding its mate bitmap in %d jobs",__func__,job_ptr->job_id,list_count(job_ptr->job_ptr_mate));
+		debug5("COLOCATION: %s job_id %u shares node, finding its mate bitmap in %d jobs",
+				__func__,job_ptr->job_id,list_count(job_ptr->job_ptr_mate));
 		rc = _find_job_mate(cr_ptr, job_ptr, bitmap,
 					min_nodes, max_nodes,
 					req_nodes, max_share);	

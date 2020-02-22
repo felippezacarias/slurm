@@ -84,9 +84,13 @@ To use diferent models or functions to create the colocation, the following vari
    Max number of jobs considered when computing colocation pairs.
  - max_degradation (default: 100%)
    Predicted degradations higher than the threshold are not considered as colocation pair.
+ - colocation_check (default: 0)
+   Flag to dynamically check pairs created during the colocation computation.
+   0: Only check the pairs on new job arrival
+   1: Periodically recompute the pairs
 
 Example:
-  **SchedulerParameters=max_colocation_sched=50,max_degradation=120,colocation_model=linear_regression.sav,colocation_function=greedy**
+  **SchedulerParameters=max_colocation_sched=50,max_degradation=120,colocation_model=linear_regression.sav,colocation_function=greedy,colocation_check=1**
 
 
 SOURCE DISTRIBUTION HIERARCHY

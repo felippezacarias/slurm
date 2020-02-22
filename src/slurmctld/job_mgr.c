@@ -9298,15 +9298,17 @@ static void _list_delete_job(void *job_entry)
 
 	xfree(job_ptr->hwprofile);
 	//Clean my jobid from all my jobmates list
-	struct job_record *job_mate;
-	ListIterator job_mate_iterator;
-	job_mate_iterator = list_iterator_create(job_ptr->job_ptr_mate);
-	while ((job_mate = (struct job_record *) list_next(job_mate_iterator))) {
-		   if(job_mate->job_ptr_mate != NULL)
-		   		list_delete_all(job_mate->job_ptr_mate, _delete_job_mate_by_id,
-				&(job_ptr->job_id));
+	if(job_ptr->job_ptr_mate){
+		struct job_record *job_mate;
+		ListIterator job_mate_iterator;
+		job_mate_iterator = list_iterator_create(job_ptr->job_ptr_mate);
+		while ((job_mate = (struct job_record *) list_next(job_mate_iterator))) {
+			if(job_mate->job_ptr_mate != NULL)
+					list_delete_all(job_mate->job_ptr_mate, _delete_job_mate_by_id,
+					&(job_ptr->job_id));
+		}
+		FREE_NULL_LIST(job_ptr->job_ptr_mate);
 	}
-	FREE_NULL_LIST(job_ptr->job_ptr_mate);
 
 	xfree(job_ptr->licenses);
 	FREE_NULL_LIST(job_ptr->license_list);
