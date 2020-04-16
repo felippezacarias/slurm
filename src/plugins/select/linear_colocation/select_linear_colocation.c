@@ -729,6 +729,7 @@ static int _find_job_mate(struct cr_record *cr_ptr, struct job_record *job_ptr,
 	if(list_is_empty(job_ptr->job_ptr_mate))
 		return rc;
 
+	//Instead of job_list the colocation uses job_mate structure
 	job_iterator = list_iterator_create(job_ptr->job_ptr_mate);
 	// TODO: check if the jobs share the same partition
 	while ((job_scan_ptr = (struct job_record *) list_next(job_iterator))) {

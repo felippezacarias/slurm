@@ -74,6 +74,7 @@ static int check_combination;
 PyObject *pModule;
 PyObject *pFunc = NULL;
 uint32_t priority = NO_VAL - 1;
+List *colocated_jobs = NULL;
 
 /*********************** local functions *********************/
 static void _colocation_scheduling(void);
@@ -82,7 +83,7 @@ static void _load_config(void);
 static void _my_sleep(int secs);
 static void _compute_colocation_pairs(PyObject *pList);
 static bool coalocate_candidate(struct job_record *job_ptr);
-static int _find_job_mate_by_id(void *object, void *arg);
+static int _find_job_by_id(void *object, void *arg);
 PyObject* _read_job_profile_file(struct job_record *job_ptr);
 PyObject* _create_model_input(void);
 static void _update_job_info(PyObject *pListColocation);
@@ -226,7 +227,7 @@ static bool coalocate_candidate(struct job_record *job_ptr)
 	return candidate;
 }
 
-static int _find_job_mate_by_id(void *object, void *arg)
+static int _find_job_by_id(void *object, void *arg)
 {
 	struct job_record *job_info = (struct job_record *)object;
 	uint32_t job_id          = *(uint32_t *)arg;
@@ -286,60 +287,78 @@ static void _colocation_scheduling(void)
 
 		//It possible may cause a job starvation, but for sure will increase the
 		//wait time for a non shared job
-		// TODO: Possible solution: schedule number of jobs = half number of available nodes
-		_attempt_colocation();
+		// TODO: Possible solution: tag the job as colocated.
+		//_attempt_colocation();
 		debug5("COLOCATION: %s After _attempt_colocation!",__func__);
 
 	}
+	_attempt_colocation();
 }
 
 static void _attempt_colocation(void)
 {
-	int rc = SLURM_SUCCESS;
+	int rc = SLURM_FAILURE;
 	uint32_t  jobs_to_colocate = 0;
-	struct job_record *job_ptr;
-	ListIterator job_iterator;
+	struct job_record *job_ptr, *job_scan_ptr, *job_colocated;
+	ListIterator job_iterator,job_mat_iterator;
 	
 	debug5("COLOCATION: %s",__func__);
 	job_iterator = list_iterator_create(job_list);		
 	while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
 		if(jobs_to_colocate == max_sched_job_cnt) break;
 		jobs_to_colocate++;
-		if (!IS_JOB_PENDING(job_ptr) || 
-			!(job_ptr->details->share_res))
+		job_scan_ptr = list_find_first(colocated_jobs, _find_job_by_id,&job_ptr->job_id);
+		if (!IS_JOB_RUNNING(job_ptr) ||
+			(list_is_empty(job_ptr->job_ptr_mate)) ||
+			job_scan_ptr)
 			continue;
+		
+		job_mat_iterator = list_iterator_create(job_ptr->job_ptr_mate);
+		while ((job_scan_ptr = (struct job_record *) list_next(job_mat_iterator)) &&
+				(rc != SLURM_SUCCESS)) {
 
-		debug5("COLOCATION: %s Trying schedule job %u",__func__,job_ptr->job_id);
-		rc = select_nodes(job_ptr, false, NULL, NULL, false);
+			debug5("COLOCATION: %s Trying colocate job %u",__func__,job_scan_ptr->job_id);
 
-		if (rc == SLURM_SUCCESS) {
-			/* job initiated */
-			char job_id_str[64];			
-			debug5("COLOCATION: %s Started %s in %s on %s",__func__,
-				jobid2fmt(job_ptr, job_id_str, sizeof(job_id_str)),
-				job_ptr->part_ptr->name, job_ptr->nodes);
-			power_g_job_start(job_ptr);
-			if (job_ptr->batch_flag == 0)
-				srun_allocate(job_ptr->job_id);
-			else if (
-	#ifdef HAVE_BG
-				/*
-				* On a bluegene system we need to run the prolog
-				* while the job is CONFIGURING so this can't work
-				* off the CONFIGURING flag as done elsewhere.
-				*/
-				!job_ptr->details ||
-				!job_ptr->details->prolog_running
-	#else
-				!IS_JOB_CONFIGURING(job_ptr)
-	#endif
-				)
-				launch_job(job_ptr);
+			//When can I clean the colocated_jobs list?
+			job_colocated = list_find_first(colocated_jobs, _find_job_by_id,&job_scan_ptr->job_id);
+			if(job_colocated)
+				continue;
 
-		} else {
-			debug5("COLOCATION: %s Failed to start JobId=%u: %s",__func__,
-				job_ptr->job_id, slurm_strerror(rc));
-		}
+			rc = select_nodes(job_scan_ptr, false, NULL, NULL, false);
+
+			if (rc == SLURM_SUCCESS) {
+				/* job initiated */
+				char job_id_str[64];			
+				debug5("COLOCATION: %s Started %s in %s on %s",__func__,
+					jobid2fmt(job_scan_ptr, job_id_str, sizeof(job_id_str)),
+					job_scan_ptr->part_ptr->name, job_scan_ptr->nodes);
+				power_g_job_start(job_scan_ptr);
+				if (job_scan_ptr->batch_flag == 0)
+					srun_allocate(job_scan_ptr->job_id);
+				else if (
+		#ifdef HAVE_BG
+					/*
+					* On a bluegene system we need to run the prolog
+					* while the job is CONFIGURING so this can't work
+					* off the CONFIGURING flag as done elsewhere.
+					*/
+					!job_scan_ptr->details ||
+					!job_scan_ptr->details->prolog_running
+		#else
+					!IS_JOB_CONFIGURING(job_scan_ptr)
+		#endif
+					)
+					launch_job(job_scan_ptr);
+
+					// Save colocated job on tagged list
+					list_append(colocated_jobs,job_scan_ptr);
+			} else {
+				debug5("COLOCATION: %s Failed to start JobId=%u: %s",__func__,
+					job_scan_ptr->job_id, slurm_strerror(rc));
+			}
+
+		}	
+		list_iterator_destroy(job_mat_iterator);
 
 	}
 	list_iterator_destroy(job_iterator);
@@ -488,7 +507,7 @@ static void _update_job_info(PyObject *pListColocation){
 					debug5("colocation: %s could not find job %u",__func__,job_id);
 				}
 				
-				list_enqueue(job_ptr->job_ptr_mate,job_ptr_sec);
+				list_append(job_ptr->job_ptr_mate,job_ptr_sec);
 
 				// For optimal the jobid appears only once in the final result
 				// from the python
@@ -497,7 +516,7 @@ static void _update_job_info(PyObject *pListColocation){
 						job_ptr_sec->job_ptr_mate = list_create(NULL);
 						job_ptr_sec->details->share_res = COLOCATION_SHARE;
 					}
-					list_enqueue(job_ptr_sec->job_ptr_mate,job_ptr);
+					list_append(job_ptr_sec->job_ptr_mate,job_ptr);
 				}
 				
 				debug5("colocation: %s Jobs to share node jobid1 = %u jobid2 = %u",
@@ -626,6 +645,8 @@ extern void *colocation_agent(void *args)
 		debug5("Colocation: %s Failed to load degradation_model!",__func__);
 	}
 
+	// Initiate colocated tag list
+	colocated_jobs = list_create(NULL);
 	last_sched_time = time(NULL);
 	while (!stop_colocation) {
 		_my_sleep(colocation_interval);
@@ -646,6 +667,7 @@ extern void *colocation_agent(void *args)
 		(void) bb_g_job_try_stage_in();
 		unlock_slurmctld(all_locks);
 	}
+	FREE_NULL_LIST(colocated_jobs);
 	xfree(colocation_function);
 	xfree(colocation_model);
     Py_XDECREF(pModule);
