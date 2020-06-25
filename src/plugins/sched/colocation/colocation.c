@@ -71,6 +71,7 @@ static double degradation_limit = -1.0;
 static char *colocation_function = NULL;
 static char *colocation_model = NULL;
 static int check_combination;
+static int fifo_shared;
 PyObject *pModule;
 PyObject *pFunc = NULL;
 uint32_t priority = NO_VAL - 1;
@@ -156,6 +157,10 @@ static void _load_config(void)
 	} else {
 		colocation_function = xstrdup(DEFAULT_COLOCATION_FUNCTION);
 	}
+	fifo_shared = 0;
+	if(((strcmp(colocation_function,"shared")) == 0)){
+		fifo_shared = 1;
+	}
 
 	xfree(colocation_model);
 	if (sched_params &&  (tmp_ptr = strstr(sched_params, "colocation_model="))) {
@@ -200,7 +205,12 @@ static bool coalocate_candidate(struct job_record *job_ptr)
 	bool candidate = false;
 	ListIterator job_mate_iterator;
 
-	if (IS_JOB_PENDING(job_ptr))
+	// if it considers only job_pending we get an error that the reference
+	// between two jobs can be missed and give a segfault on job purge
+	// This will allow the colocation in batches
+	if ((IS_JOB_PENDING(job_ptr)) &&
+		((job_ptr->job_ptr_mate == NULL) ||
+			(list_is_empty(job_ptr->job_ptr_mate))))
 		return true;
 
 	if (IS_JOB_RUNNING(job_ptr)){
@@ -307,22 +317,28 @@ static void _attempt_colocation(void)
 	while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
 		if(jobs_to_colocate == max_sched_job_cnt) break;
 		jobs_to_colocate++;
+		//If the job_ptr was coalocated before, we dont test its mates 
 		job_scan_ptr = list_find_first(colocated_jobs, _find_job_by_id,&job_ptr->job_id);
 		if (!IS_JOB_RUNNING(job_ptr) ||
 			(list_is_empty(job_ptr->job_ptr_mate)) ||
-			job_scan_ptr)
+			((job_scan_ptr) && !(fifo_shared)))
 			continue;
 		
 		job_mat_iterator = list_iterator_create(job_ptr->job_ptr_mate);
 		while ((job_scan_ptr = (struct job_record *) list_next(job_mat_iterator)) &&
-				(rc != SLURM_SUCCESS)) {
-
-			debug5("COLOCATION: %s Trying colocate job %u",__func__,job_scan_ptr->job_id);
+				(rc != SLURM_SUCCESS)) {			
 
 			//When can I clean the colocated_jobs list?
 			job_colocated = list_find_first(colocated_jobs, _find_job_by_id,&job_scan_ptr->job_id);
 			if(job_colocated)
 				continue;
+
+			if (IS_JOB_RUNNING(job_scan_ptr)){
+				list_append(colocated_jobs,job_scan_ptr);
+				continue;
+			}
+
+			debug5("COLOCATION: %s Trying colocate job %u",__func__,job_scan_ptr->job_id);
 
 			rc = select_nodes(job_scan_ptr, false, NULL, NULL, false);
 
@@ -510,8 +526,9 @@ static void _update_job_info(PyObject *pListColocation){
 				list_append(job_ptr->job_ptr_mate,job_ptr_sec);
 
 				// For optimal the jobid appears only once in the final result
-				// from the python
-				if((strcmp(colocation_function,DEFAULT_COLOCATION_FUNCTION)) == 0){
+				// from the python. Also included DIO, but it is not required
+				if(((strcmp(colocation_function,DEFAULT_COLOCATION_FUNCTION)) == 0) ||
+					((strcmp(colocation_function,"dio")) == 0)){
 					if(job_ptr_sec->job_ptr_mate == NULL){
 						job_ptr_sec->job_ptr_mate = list_create(NULL);
 						job_ptr_sec->details->share_res = COLOCATION_SHARE;
