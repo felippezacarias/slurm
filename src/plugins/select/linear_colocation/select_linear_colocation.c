@@ -723,6 +723,7 @@ static int _find_job_mate(struct cr_record *cr_ptr, struct job_record *job_ptr,
 			  uint32_t req_nodes, int max_share)
 {
 	ListIterator job_iterator;
+	uint32_t jobid;
 	struct job_record *job_scan_ptr;
 	int rc = EINVAL;
 
@@ -732,9 +733,13 @@ static int _find_job_mate(struct cr_record *cr_ptr, struct job_record *job_ptr,
 	//Instead of job_list the colocation uses job_mate structure
 	job_iterator = list_iterator_create(job_ptr->job_ptr_mate);
 	// TODO: check if the jobs share the same partition
-	while ((job_scan_ptr = (struct job_record *) list_next(job_iterator))) {
+	while (( jobid = (uint32_t) list_next(job_iterator))) {
 		debug5("COLOCATION: %s job_id %u mate_id %u tot %d",
-			__func__,job_ptr->job_id,job_scan_ptr->job_id,list_count(job_ptr->job_ptr_mate));
+			__func__,job_ptr->job_id,jobid,list_count(job_ptr->job_ptr_mate));
+		if ((job_scan_ptr = find_job_record(jobid)) == NULL) {
+			debug5("colocation: %s could not find job %u",__func__,jobid);
+			continue;
+		}
 		if ((!IS_JOB_RUNNING(job_scan_ptr))			||
 		    (job_scan_ptr->node_cnt   != req_nodes)		||
 		    (job_scan_ptr->total_cpus <

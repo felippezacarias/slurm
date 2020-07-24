@@ -44,26 +44,49 @@ def optimal(queue, degradation_limit, model_name):
 		scaling_model = pickle.load(open(path.join(basepath,"scaling.sav"), 'rb'))
 
 		#For each job create degradation graph
-		for jobMain in joblist:
-			for jobSecond in joblist:
-				if(jobMain != jobSecond):
-					prediction = apps_counters[jobMain] + apps_counters[jobSecond]
-					prediction_normalized = scaling_model.transform([prediction])
-					start = time.time()
-					degradationMain = loaded_model.predict(prediction_normalized)
-					time_predict += (time.time() - start)
+		for it in range(0,len(queue),1):
+			for j in range(it+1,len(queue),1):
+				jobMain = joblist[it]
+				jobSecond = joblist[j]
+				prediction = apps_counters[jobMain] + apps_counters[jobSecond]
+				prediction_normalized = scaling_model.transform([prediction])
+				start = time.time()
+				degradationMain = loaded_model.predict(prediction_normalized)
+				time_predict += (time.time() - start)
 
-					prediction = apps_counters[jobSecond] + apps_counters[jobMain]
-					prediction_normalized = scaling_model.transform([prediction])
-					start = time.time()
-					degradationSecond = loaded_model.predict(prediction_normalized)
-					time_predict += (time.time() - start)
+				prediction = apps_counters[jobSecond] + apps_counters[jobMain]
+				prediction_normalized = scaling_model.transform([prediction])
+				start = time.time()
+				degradationSecond = loaded_model.predict(prediction_normalized)
+				time_predict += (time.time() - start)
 
-					t1 = time_alone[jobMain] + (time_alone[jobMain]*(degradationMain[0]/100))
-					t2 = time_alone[jobSecond] + (time_alone[jobSecond]*(degradationSecond[0]/100))
+				t1 = time_alone[jobMain] + (time_alone[jobMain]*(degradationMain[0]/100))
+				t2 = time_alone[jobSecond] + (time_alone[jobSecond]*(degradationSecond[0]/100))
 
+				grafo.add_aresta(jobMain, jobSecond, int(max(t1,t2)))
 
-					grafo.add_aresta(jobMain, jobSecond, int(max(t1,t2)))
+		#For each job create degradation graph
+		#for for not necessary
+		#for jobMain in joblist:
+		#	for jobSecond in joblist:
+		#		if(jobMain != jobSecond):
+		#			prediction = apps_counters[jobMain] + apps_counters[jobSecond]
+		#			prediction_normalized = scaling_model.transform([prediction])
+		#			start = time.time()
+		#			degradationMain = loaded_model.predict(prediction_normalized)
+		#			time_predict += (time.time() - start)
+#
+		#			prediction = apps_counters[jobSecond] + apps_counters[jobMain]
+		#			prediction_normalized = scaling_model.transform([prediction])
+		#			start = time.time()
+		#			degradationSecond = loaded_model.predict(prediction_normalized)
+		#			time_predict += (time.time() - start)
+#
+		#			t1 = time_alone[jobMain] + (time_alone[jobMain]*(degradationMain[0]/100))
+		#			t2 = time_alone[jobSecond] + (time_alone[jobSecond]*(degradationSecond[0]/100))
+#
+#
+		#			grafo.add_aresta(jobMain, jobSecond, int(max(t1,t2)))
 
 
 		#Apply minimum weight perfect matching to find optimal co-schedule

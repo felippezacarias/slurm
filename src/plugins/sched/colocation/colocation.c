@@ -84,11 +84,11 @@ static void _load_config(void);
 static void _my_sleep(int secs);
 static void _compute_colocation_pairs(PyObject *pList);
 static bool coalocate_candidate(struct job_record *job_ptr);
-static int _find_job_by_id(void *object, void *arg);
+static int _find_job_by_id(uint32_t object, void *arg);
 PyObject* _read_job_profile_file(struct job_record *job_ptr);
 PyObject* _create_model_input(void);
 static void _update_job_info(PyObject *pListColocation);
-
+static void clean_colocated_jobs_list();
 
 
 /* Terminate colocation_agent */
@@ -201,6 +201,7 @@ static void _load_config(void)
 
 static bool coalocate_candidate(struct job_record *job_ptr)
 {
+	uint32_t jobid;
 	struct job_record *job_mate;
 	bool candidate = false;
 	ListIterator job_mate_iterator;
@@ -219,7 +220,12 @@ static bool coalocate_candidate(struct job_record *job_ptr)
 			candidate = true; 
 		else{
 			job_mate_iterator = list_iterator_create(job_ptr->job_ptr_mate);
-			while ((job_mate = (struct job_record *) list_next(job_mate_iterator))) {
+			while ((jobid = (uint32_t) list_next(job_mate_iterator))) {
+				if ((job_mate = find_job_record(jobid)) == NULL) {
+					debug5("colocation: %s could not find job %u",__func__,jobid);
+					candidate = true;
+					continue;
+				}
 				//if they are running but in separate nodes
 				if((IS_JOB_RUNNING(job_mate)) && 
 				   (!bit_super_set(job_ptr->node_bitmap,job_mate->node_bitmap))){
@@ -237,12 +243,12 @@ static bool coalocate_candidate(struct job_record *job_ptr)
 	return candidate;
 }
 
-static int _find_job_by_id(void *object, void *arg)
+static int _find_job_by_id(uint32_t object, void *arg)
 {
-	struct job_record *job_info = (struct job_record *)object;
+	uint32_t job_info = object;
 	uint32_t job_id          = *(uint32_t *)arg;
 
-	if (job_info->job_id == job_id)
+	if (job_info == job_id)
 		return 1;
 
 	return 0;
@@ -299,15 +305,19 @@ static void _colocation_scheduling(void)
 		//wait time for a non shared job
 		// TODO: Possible solution: tag the job as colocated.
 		//_attempt_colocation();
-		debug5("COLOCATION: %s After _attempt_colocation!",__func__);
+		//debug5("COLOCATION: %s After _attempt_colocation!",__func__);
 
 	}
 	_attempt_colocation();
+	debug5("COLOCATION: %s After _attempt_colocation!",__func__);
+	clean_colocated_jobs_list();
+	debug5("COLOCATION: %s After clean_colocated_jobs_list!",__func__);
 }
 
 static void _attempt_colocation(void)
 {
 	int rc = SLURM_FAILURE;
+	uint32_t jobid;
 	uint32_t  jobs_to_colocate = 0;
 	struct job_record *job_ptr, *job_scan_ptr, *job_colocated;
 	ListIterator job_iterator,job_mat_iterator;
@@ -325,16 +335,20 @@ static void _attempt_colocation(void)
 			continue;
 		
 		job_mat_iterator = list_iterator_create(job_ptr->job_ptr_mate);
-		while ((job_scan_ptr = (struct job_record *) list_next(job_mat_iterator)) &&
+		while ((jobid = (uint32_t) list_next(job_mat_iterator)) &&
 				(rc != SLURM_SUCCESS)) {			
-
+			if ((job_scan_ptr = find_job_record(jobid)) == NULL) {
+				debug5("colocation: %s could not find job %u",__func__,jobid);
+				continue;
+			}
 			//When can I clean the colocated_jobs list?
-			job_colocated = list_find_first(colocated_jobs, _find_job_by_id,&job_scan_ptr->job_id);
+			//Periodicaly clean the list later. Create func
+			job_colocated = list_find_first(colocated_jobs, _find_job_by_id,&jobid);
 			if(job_colocated)
 				continue;
 
 			if (IS_JOB_RUNNING(job_scan_ptr)){
-				list_append(colocated_jobs,job_scan_ptr);
+				list_append(colocated_jobs,job_scan_ptr->job_id);
 				continue;
 			}
 
@@ -367,7 +381,7 @@ static void _attempt_colocation(void)
 					launch_job(job_scan_ptr);
 
 					// Save colocated job on tagged list
-					list_append(colocated_jobs,job_scan_ptr);
+					list_append(colocated_jobs,job_scan_ptr->job_id);
 			} else {
 				debug5("COLOCATION: %s Failed to start JobId=%u: %s",__func__,
 					job_scan_ptr->job_id, slurm_strerror(rc));
@@ -376,6 +390,31 @@ static void _attempt_colocation(void)
 		}	
 		list_iterator_destroy(job_mat_iterator);
 
+	}
+	list_iterator_destroy(job_iterator);
+}
+
+
+static void clean_colocated_jobs_list(){
+	struct job_record *job_ptr, *job_scan_ptr, *job_colocated;
+	ListIterator job_iterator,colocated_iterator;
+	
+	debug5("COLOCATION: %s",__func__);
+	job_iterator = list_iterator_create(job_list);		
+	while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
+		colocated_iterator = list_iterator_create(colocated_jobs);
+		while ((job_scan_ptr = (uint32_t) list_next(colocated_iterator))) {
+			if(job_scan_ptr < job_ptr->job_id){
+				list_delete_item(colocated_iterator);
+			}
+			else
+			{
+				break;
+			}
+		}
+		list_iterator_destroy(colocated_iterator);
+		//I just need the lowest jobid;
+		break;
 	}
 	list_iterator_destroy(job_iterator);
 }
@@ -523,7 +562,7 @@ static void _update_job_info(PyObject *pListColocation){
 					debug5("colocation: %s could not find job %u",__func__,job_id);
 				}
 				
-				list_append(job_ptr->job_ptr_mate,job_ptr_sec);
+				list_append(job_ptr->job_ptr_mate,job_ptr_sec->job_id);
 
 				// For optimal the jobid appears only once in the final result
 				// from the python. Also included DIO, but it is not required
@@ -533,7 +572,7 @@ static void _update_job_info(PyObject *pListColocation){
 						job_ptr_sec->job_ptr_mate = list_create(NULL);
 						job_ptr_sec->details->share_res = COLOCATION_SHARE;
 					}
-					list_append(job_ptr_sec->job_ptr_mate,job_ptr);
+					list_append(job_ptr_sec->job_ptr_mate,job_ptr->job_id);
 				}
 				
 				debug5("colocation: %s Jobs to share node jobid1 = %u jobid2 = %u",
