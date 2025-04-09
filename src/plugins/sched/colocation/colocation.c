@@ -44,7 +44,7 @@
 #  define COLOCATION_INTERVAL	30
 #endif
 
-#define COLOCATION_LIMIT	4
+#define COLOCATION_LIMIT	8
 
 #define HARDWARE_COUNTER_STRING_SIZE 12056
 
@@ -87,6 +87,7 @@ PyObject* _create_model_input(void);
 static void _update_job_info(PyObject *pListColocation);
 static void _update_job_graph_info(PyObject *pListColocation);
 static void _compute_colocation_graph(PyObject *pList);
+static PyObject* colocation_get_all_nodes();
 
 int _is_colocation_candidate(struct job_record *job_ptr)
 {
@@ -383,7 +384,7 @@ PyObject* _create_model_input(void){
 			job_coaloc++;
 			//holding job to prevent scheduling while computing colocation
 			//job_ptr->priority = 0;
-			pTuple = PyTuple_New(2);
+			pTuple = PyTuple_New(3);
 			//Adding info to de model as [(job_id,[perf_counters]),...]
 			job_id = job_ptr->job_id * 1.0f;
 			debug5("COLOCATION: %s PyFloat_FromDouble size %d job_id %f",__func__,PyTuple_Size(pTuple),job_id);
@@ -392,8 +393,12 @@ PyObject* _create_model_input(void){
             rc = PyTuple_SetItem(pTuple, 0, pValue);
 			debug5("COLOCATION: %s _read_job_profile_file ",__func__);
 			pProfileList = _read_job_profile_file(job_ptr);
-			debug5("COLOCATION: %s job_id %u profile_list_size %d",__func__,job_ptr->job_id,PyList_GET_SIZE(pProfileList)); 
+			debug5("COLOCATION: %s job_id %u profile_list_size %d",__func__,job_ptr->job_id,PyList_GET_SIZE(pProfileList));
 			PyTuple_SetItem(pTuple, 1, pProfileList);
+
+			// adding 0 if job is pending, 1 if it has already started
+			pValue = PyFloat_FromDouble(_is_colocation_candidate(job_ptr) ? 0.0f : 1.0f);
+			PyTuple_SetItem(pTuple, 2, pValue);
 
 			debug5("COLOCATION: %s PyList_Append ",__func__);
 			rc = PyList_Append(pList,pTuple);
@@ -602,11 +607,11 @@ static void _compute_colocation_graph(PyObject *pList){
 	debug5("Colocation: %s Initiated input size %d.",__func__,PyList_GET_SIZE(pList) );
 
     if (pModule != NULL) {
-        if(pFunc == NULL) pFunc = PyObject_GetAttrString(pModule, "colocation_graph");
+        if(pFunc == NULL) pFunc = PyObject_GetAttrString(pModule, "colocation_graph_reordered_detailed");
         /* pFunc is a new reference */
 
         if (pFunc && PyCallable_Check(pFunc)) {
-            pArgs = PyTuple_New(2);
+            pArgs = PyTuple_New(3);
 			//Setting hardware counters list
 			PyTuple_SetItem(pArgs, 0, pList);
 
@@ -619,9 +624,11 @@ static void _compute_colocation_graph(PyObject *pList){
 			debug5("Colocation[1]: %s is tuple %d.",__func__,PyTuple_Check(pValue2));
 			debug5("Colocation[1]: %s tuple value_1 %f tuple list size %d",__func__,PyFloat_AsDouble(PyTuple_GetItem(pValue2,0)),PyList_GET_SIZE(PyTuple_GetItem(pValue2,1)));
 
+            // setting nodes
+            PyTuple_SetItem(pArgs, 1, colocation_get_all_nodes());
 
 			//Setting degradation limit to colocate jobs
-			PyTuple_SetItem(pArgs, 1, PyFloat_FromDouble(degradation_limit));
+			PyTuple_SetItem(pArgs, 2, PyFloat_FromDouble(degradation_limit));
 
 
 			debug5("COLOCATION: function %s calling PyObject_CallObject",__func__);
@@ -702,9 +709,8 @@ static void _update_job_graph_info(PyObject *pListColocation){
             ((select_job_degradation_info*)(job_ptr->select_jobinfo->data))->text = xstrdup("1st job");
 			((select_job_degradation_info*)(job_ptr->select_jobinfo->data))->incompatible_jobs = jlist;
 
-			job_ptr->details->share_res = 1;
-			job_ptr->priority = priority;
-			priority--;
+			//job_ptr->details->share_res = 1;
+			job_ptr->priority = priority--;
 
 		}
 		else{
@@ -718,6 +724,54 @@ static void _update_job_graph_info(PyObject *pListColocation){
 		}
 		toSchedule = true;
 	}
+    //priority--;
+}
+
+//--------------------------------------------------------------------------------
+
+static PyObject* colocation_get_all_nodes(){
+	int i;
+	int rc;
+	int node_inx;
+	char *end_ptr;
+	struct basil_inventory *inv;
+	struct node_record *node_ptr;
+	ListIterator job_iterator;
+	struct job_record *job_ptr = NULL;
+
+	PyObject *pResult;
+	PyObject *pList, *pNodeTuple;
+	PyObject *pTuple, *pValue;
+
+
+	pResult = PyList_New(0);
+	if(pResult == NULL){
+		debug("COLOCATION: %s Couldn't allocate node list",__func__);
+		return NULL;
+	}
+
+	for (node_inx = 0, node_ptr = node_record_table_ptr; node_inx <node_record_count;
+	     node_inx++, node_ptr++) {
+        if(bit_test(avail_node_bitmap, node_inx)){
+            pList = PyList_New(0);
+            rc = PyList_Append(pResult, Py_BuildValue("(iO)", node_ptr->cpus, pList));
+			if(rc != 0 ){
+				debug5("COLOCATION: %s tupla append error.",__func__);
+				return NULL;
+			}
+
+            job_iterator = list_iterator_create(job_list);
+            while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
+                if(_is_colocation_consideration_candidate(job_ptr) && job_ptr->job_state != JOB_PENDING && job_ptr->job_state != JOB_COMPLETE && job_ptr->node_bitmap){
+                    if(bit_test(job_ptr->node_bitmap, node_inx)){
+                        PyList_Append(pList, PyInt_FromLong(job_ptr->job_id));
+                    }
+                }
+            }
+            list_iterator_destroy(job_iterator);
+        }
+	}
+	return pResult;
 }
 
 //--------------------------------------------------------------------------------

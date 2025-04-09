@@ -5,7 +5,7 @@ import traceback
 def colocation_pairs_optimal(queue, degradation_limit):
 
 	try:
-		import sys
+		import os, sys
 			
 		import pickle
 
@@ -32,10 +32,10 @@ def colocation_pairs_optimal(queue, degradation_limit):
 			joblist.append(jobid)
 
 		#Load machine learning model
-		#loaded_model = pickle.load(open("linear_regression.sav", 'rb'))
-		loaded_model = pickle.load(open("/home/slurm/src/plugins/sched/colocation/model/mlpregressor.sav", 'rb'))
+		#loaded_model = pickle.load(open(os.path.join(os.path.dirname(__file__), 'linear_regression.sav'), 'rb'))
+		loaded_model = pickle.load(open(os.path.join(os.path.dirname(__file__), 'mlpregressor.sav'), 'rb'))
 		#Load scaling used on training fase
-		scaling_model = pickle.load(open("/home/slurm/src/plugins/sched/colocation/model/scaling.sav", 'rb'))
+		scaling_model = pickle.load(open(os.path.join(os.path.dirname(__file__), 'scaling.sav'), 'rb'))
 
 		#For each job create degradation graph
 		for jobMain in joblist:
@@ -103,7 +103,7 @@ def colocation_pairs_optimal(queue, degradation_limit):
 def colocation_pairs(queue, degradation_limit):
 
 	try:
-		import sys
+		import os, sys
 			
 		import pickle
 
@@ -130,10 +130,10 @@ def colocation_pairs(queue, degradation_limit):
 			joblist.append(jobid)
 
 		#Load machine learning model
-		#loaded_model = pickle.load(open("linear_regression.sav", 'rb'))
-		loaded_model = pickle.load(open("/home/slurm/src/plugins/sched/colocation/model/mlpregressor.sav", 'rb'))
+		#loaded_model = pickle.load(open(os.path.join(os.path.dirname(__file__), 'linear_regression.sav'), 'rb'))
+		loaded_model = pickle.load(open(os.path.join(os.path.dirname(__file__), 'mlpregressor.sav'), 'rb'))
 		#Load scaling used on training fase
-		scaling_model = pickle.load(open("/home/slurm/src/plugins/sched/colocation/model/scaling.sav", 'rb'))
+		scaling_model = pickle.load(open(os.path.join(os.path.dirname(__file__), 'scaling.sav'), 'rb'))
 
 		for it in range(0,len(queue),1):
 			for j in range(it+1,len(queue),1):
@@ -188,10 +188,10 @@ def colocation_pairs(queue, degradation_limit):
 		f.closed
 
 #Graph approach
-def colocation_graph(queue, degradation_limit):
+def colocation_graph(queue, nodes, degradation_limit):
 
 	try:
-		import sys
+		import os, sys
 			
 		import pickle
 
@@ -209,25 +209,33 @@ def colocation_graph(queue, degradation_limit):
 		list_jobid = []
 		schedule_s = []
 		jobs_dict = {}
+		pending_joblist = set()
 
 
 		#creating dictionary for building degradation graph
-		for job in queue:
+		for i, job in enumerate(queue):
 			jobid = job[0]
+			if len(job)<3:
+				queue[i] = (job[0], job[1], 0)
 			apps_counters[jobid] = job[1]
 			joblist.append(jobid)
 			if jobid not in jobs_dict:
 				jobs_dict[jobid] = set()
 
-		#Load machine learning model
-		#loaded_model = pickle.load(open("linear_regression.sav", 'rb'))
-		loaded_model = pickle.load(open("/home/slurm/src/plugins/sched/colocation/model/mlpregressor.sav", 'rb'))
-		#Load scaling used on training fase
-		scaling_model = pickle.load(open("/home/slurm/src/plugins/sched/colocation/model/scaling.sav", 'rb'))
+		for job in queue:
+			if job[2] < .5:
+				pending_joblist.add(job[0])
 
+		#Load machine learning model
+		#loaded_model = pickle.load(open(os.path.join(os.path.dirname(__file__), 'linear_regression.sav'), 'rb'))
+		loaded_model = pickle.load(open(os.path.join(os.path.dirname(__file__), 'mlpregressor.sav'), 'rb'))
+		#Load scaling used on training fase
+		scaling_model = pickle.load(open(os.path.join(os.path.dirname(__file__), 'scaling.sav'), 'rb'))
         
 		for it in range(0,len(queue),1):
 			for j in range(it+1,len(queue),1):
+				if queue[it][2]>.5 and queue[j][2]>.5:
+					continue;
 				#print("job1 = {r1} job2 = {r2}".format(r1=joblist[it],r2=joblist[j]))
 				try:
 					prediction = apps_counters[joblist[it]] + apps_counters[joblist[j]]
@@ -237,7 +245,6 @@ def colocation_graph(queue, degradation_limit):
 					prediction = apps_counters[joblist[j]] + apps_counters[joblist[it]]
 					prediction_normalized = scaling_model.transform([prediction])
 					degradationSecond = loaded_model.predict(prediction_normalized)
-						
 					if max(degradationMain[0], degradationSecond[0]) > degradation_limit:
 						if joblist[j] not in jobs_dict[joblist[it]]:
 							jobs_dict[joblist[it]].add(joblist[j])
@@ -251,7 +258,8 @@ def colocation_graph(queue, degradation_limit):
 			l = []
 			for j in jobs_dict[job]:
 				l.append(j)
-			final_list.append([job, l])
+			if job in pending_joblist:
+				final_list.append([job, l])
 		
 
 		with open('/tmp/SLURM_PYTHON_GRAPH_DEBUG.txt', 'a') as f:
@@ -279,6 +287,131 @@ def colocation_graph(queue, degradation_limit):
 			#print('Filename:', str(e), file=f)  # Python 3.x
 		f.closed
 
+def colocation_graph_detailed(queue, nodes, degradation_limit):
+
+	try:
+		import os, sys
+			
+		import pickle
+
+		#Depois colocar esse "/opt/slurm/lib/degradation_model/" pra 
+		#ser pego da variável de ambiente
+		#sys.path.insert(0, '/home/slurm/src/plugins/sched/colocation/model/graph/')
+		#Arquivo apenas necessário para propósitos de debug
+		#with open('/tmp/PYTHON_PATH.txt', 'a') as f:
+		#	print >> f, 'Filename:', sys.path  # Python 2.x
+
+
+		schedule = []
+		apps_counters = {}
+		joblist = []
+		list_jobid = []
+		schedule_s = []
+		jobs_dict = {}
+		pending_joblist = set()
+
+
+		#creating dictionary for building degradation graph
+		for i, job in enumerate(queue):
+			jobid = job[0]
+			if len(job)<3:
+				queue[i] = (job[0], job[1], 0)
+			apps_counters[jobid] = job[1]
+			joblist.append(jobid)
+			if jobid not in jobs_dict:
+				jobs_dict[jobid] = {}
+
+		for job in queue:
+			if job[2] < .5:
+				pending_joblist.add(job[0])
+
+		#Load machine learning model
+		#loaded_model = pickle.load(open(os.path.join(os.path.dirname(__file__), 'linear_regression.sav'), 'rb'))
+		loaded_model = pickle.load(open(os.path.join(os.path.dirname(__file__), 'mlpregressor.sav'), 'rb'))
+		#Load scaling used on training fase
+		scaling_model = pickle.load(open(os.path.join(os.path.dirname(__file__), 'scaling.sav'), 'rb'))
+        
+		for it in range(0,len(queue),1):
+			for j in range(it+1,len(queue),1):
+				if queue[it][2]>.5 and queue[j][2]>.5:
+					continue;
+				#print("job1 = {r1} job2 = {r2}".format(r1=joblist[it],r2=joblist[j]))
+				try:
+					prediction = apps_counters[joblist[it]] + apps_counters[joblist[j]]
+					prediction_normalized = scaling_model.transform([prediction])
+
+					degradationMain = loaded_model.predict(prediction_normalized)
+					prediction = apps_counters[joblist[j]] + apps_counters[joblist[it]]
+					prediction_normalized = scaling_model.transform([prediction])
+					degradationSecond = loaded_model.predict(prediction_normalized)
+					d = max(degradationMain[0], degradationSecond[0])
+					if joblist[j] not in jobs_dict[joblist[it]]:
+						jobs_dict[joblist[it]][joblist[j]] = d
+					if joblist[it] not in jobs_dict[joblist[j]]:
+						jobs_dict[joblist[j]][joblist[it]] = d;
+				except Exception, e:
+					pass
+
+		with open('/tmp/SLURM_PYTHON_GRAPH_DEBUG.txt', 'a') as f:
+			print >> f, 'EXECUTION:'  # Python 2.x
+			print >> f, 'FORBIDDEN COMBINATIONS'
+			for job in jobs_dict.keys():
+				print >> f, "Job ", job, "[",
+				for j in jobs_dict[job].keys():
+					print >> f, "("+str(j)+","+str(jobs_dict[job][j])+")",
+				print >> f, "]"
+
+		final_list = []
+		for job in jobs_dict.keys():
+			l = jobs_dict[job]
+			if job in pending_joblist:
+				final_list.append([job, l])
+				
+		return final_list
+
+	except Exception, e:
+		import sys, os
+		exc_type, exc_obj, exc_tb = sys.exc_info()
+		with open('/tmp/SLURM_PYTHON_GRAPH_ERROR.txt', 'a') as f:
+			print >> f, traceback.format_exc()
+			print >> f, 'Filename:', type(e)  # Python 2.x
+			print >> f, 'Filename:', str(e)  # Python 2.x
+			print >> f, 'Filename:', type(queue)  # Python 2.x
+			print >> f, 'Line number:', exc_tb.tb_lineno  # Python 2.x
+			print >> f, 'degradation_limit:', degradation_limit  # Python 2.x
+			print >> f, 'Filename:', type(degradation_limit)  # Python 2.x
+			#print('Filename:', str(e), file=f)  # Python 3.x
+		f.closed
+
+def colocation_graph_reordered(queue, nodes, degradation_limit):
+	import job_assignment
+	jobs = colocation_graph(queue, None, degradation_limit)
+	result = job_assignment.find_minimal_assignment(jobs, nodes, degradation_limit)
+	for r in result[1]:
+		print r
+	with open('/tmp/SLURM_PYTHON_GRAPH_DEBUG.txt', 'a') as f:
+		print >> f, 'SCHEDULE:'
+		print >> f, result[0]
+		print >> f, 'NODES:'
+		for r in result[1]:
+			print >> f, r
+		print >> f, ''
+	return list(result[0])
+
+def colocation_graph_reordered_detailed(queue, nodes, degradation_limit):
+	import job_assignment
+	jobs = colocation_graph_detailed(queue, None, degradation_limit)
+	result = job_assignment.find_minimal_assignment_detailed(jobs, nodes, degradation_limit)
+	for r in result[1]:
+		print r
+	with open('/tmp/SLURM_PYTHON_GRAPH_DEBUG.txt', 'a') as f:
+		print >> f, 'SCHEDULE:'
+		print >> f, result[0]
+		print >> f, 'NODES:'
+		for r in result[1]:
+			print >> f, r
+		print >> f, ''
+	return list(result[0])
 
 def colocation_pairs2(queue, degradation_limit):
 	tupla1 = queue[0]
